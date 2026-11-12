@@ -56,7 +56,7 @@ private enum TrollPluginsEntry: ItemListNodeEntry {
                 presentationData: presentationData,
                 title: plugin.title,
                 value: plugin.isEnabled,
-                enableInteractiveTransitioning: false,
+                enableInteractiveChanges: true,
                 sectionId: self.section,
                 style: .blocks,
                 updated: { value in
