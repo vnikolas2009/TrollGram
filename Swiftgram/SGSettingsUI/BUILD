@@ -20,6 +20,7 @@ swift_library(
         "//Swiftgram/SGLogging:SGLogging",
         "//Swiftgram/SGSimpleSettings:SGSimpleSettings",
         "//Swiftgram/SGTrollPrivacy:SGTrollPrivacy",
+        "//Swiftgram/SGTrollPrivacyCore:SGTrollPrivacyCore",
         "//Swiftgram/SGTrollPluginsUI:SGTrollPluginsUI",
         "//Swiftgram/SGStrings:SGStrings",
 #        "//Swiftgram/SGAPI:SGAPI",

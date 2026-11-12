@@ -92,3 +92,8 @@ submodules/TelegramApi/Tests/SwiftPMGenerated/
 /Telegram.app/
 build/accessibility/
 *.log
+
+# TrollGram: Python plugin runtime (fetched by build-system/setup_python.py)
+/third-party/python/Python.xcframework/
+/build/python-ios/
+Swiftgram/PythonPlugins/**/__pycache__/

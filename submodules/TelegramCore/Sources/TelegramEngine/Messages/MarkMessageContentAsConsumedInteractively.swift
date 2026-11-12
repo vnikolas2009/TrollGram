@@ -198,6 +198,12 @@ func markMessageContentAsConsumedRemotely(transaction: Transaction, messageId: M
         
         let timestamp = Int32(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970)
         let countdownBeginTime = consumeDate ?? timestamp
+
+        // TrollGram "View Once Media": the media is never replaced with an
+        // expired stub and the countdown never starts, so it stays replayable.
+        if TrollPrivacyRuntime.viewOnceMediaUnlocked {
+            return
+        }
         
         for i in 0 ..< updatedAttributes.count {
             if let attribute = updatedAttributes[i] as? AutoremoveTimeoutMessageAttribute {

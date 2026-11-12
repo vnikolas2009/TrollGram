@@ -402,6 +402,7 @@ swift_library(
         "//submodules/TelegramUI:TelegramUIAssets",
         "//submodules/TelegramUI/Components/Calls/CallScreen:Assets",
         ":GeneratedPresentationStrings/Resources/PresentationStrings.data",
+        "//third-party/python:PythonStdlib", # TrollGram: plugins stdlib
     ],
     deps = [
         "//submodules/TelegramUI:TelegramUI",
@@ -2113,6 +2114,7 @@ ios_application(
         ":PostboxFramework",
         ":TelegramCoreFramework",
         ":TelegramUIFramework",
+        "//third-party/python:Python", # TrollGram: plugin interpreter
     ],
     strings = [
         ":AppStringResources",

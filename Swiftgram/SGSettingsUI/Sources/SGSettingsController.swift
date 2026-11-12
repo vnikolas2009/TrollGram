@@ -23,6 +23,7 @@ import WebKit
 import PeerNameColorScreen
 import UndoUI
 import SGTrollPrivacy
+import SGTrollPrivacyCore
 import SGTrollPluginsUI
 
 
@@ -161,10 +162,9 @@ private func SGControllerEntries(presentationData: PresentationData, callListSet
     // MARK: TrollGram privacy block (all features unlocked locally)
     entries.append(.header(id: id.count, section: .privacy, text: "PRIVACY", badge: newStr))
     entries.append(.disclosure(id: id.count, section: .privacy, link: .trollPlugins, text: "Plugins"))
-    for toggle in TrollPrivacySettings.allToggles {
-        entries.append(.toggle(id: id.count, section: .privacy, settingName: .trollPrivacy, value: toggle.isOn, text: toggle.title, enabled: true))
-    }
-    
+    for row in TrollPrivacyOptions.rows {
+        entries.append(.toggle(id: id.count, section: .privacy, settingName: .trollPrivacy, value: TrollPrivacyOptions.flag(row.key), text: row.title, enabled: true))
+    }    
     if SGSimpleSettings.shared.canUseNY {
         entries.append(.header(id: id.count, section: .trending, text: i18n("Settings.NY.Header", lang), badge: newStr))
         entries.append(.toggle(id: id.count, section: .trending, settingName: .nyStyleSnow, value: SGSimpleSettings.shared.nyStyle == SGSimpleSettings.NYStyle.snow.rawValue, text: i18n("Settings.NY.Style.snow", lang), enabled: true))
@@ -517,7 +517,10 @@ public func sgSettingsController(context: AccountContext/*, focusOnItemTag: Int?
         case .forceBuiltInMic:
             SGSimpleSettings.shared.forceBuiltInMic = value
         case .trollPrivacy:
-            break
+            if let key = TrollPrivacyOptions.pendingKey {
+                TrollPrivacyOptions.setFlag(key, value)
+                TrollPrivacyBootstrap.mirror()
+            }
         case .hideChannelBottomButton:
             SGSimpleSettings.shared.hideChannelBottomButton = !value
         case .secondsInMessages:

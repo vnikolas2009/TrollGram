@@ -3,11 +3,10 @@ import SwiftSignalKit
 
 /// Lightweight exteraGram plugin host.
 ///
-/// Executes `.py` plugins against a bundled Python 3.11 interpreter (see
-/// `//third-party/python`). When the interpreter or the bundled `stdlib`
-/// emulation layer is unavailable the manager runs in stub mode: plugins are
-/// listed, enabled/disabled and their settings are persisted, but no hook is
-/// dispatched.
+/// Executes `.py` plugins against an embedded CPython 3.11 interpreter (see
+/// `//third-party/python`). When the interpreter is not linked the manager
+/// still lists, enables and persists plugin settings, but hooks are
+/// pass-through.
 public final class PythonPluginManager {
     public static let shared = PythonPluginManager()
 
@@ -29,7 +28,7 @@ public final class PythonPluginManager {
     private let queue = DispatchQueue(label: "app.trollgram.ios.plugins")
     private let statePromise = ValuePromise<State>(State(), ignoreRepeated: true)
     private let stateValue: Atomic<State>
-    private var pythonInitialized = false
+    private var bridgeRegistered = false
 
     private let pluginsDirectory: String
     private let dataDirectory: String
@@ -53,31 +52,45 @@ public final class PythonPluginManager {
         return self.pluginsDirectory
     }
 
-    // MARK: - Interpreter
-
     /// `false` when `Python.xcframework` is not linked (stub mode).
     public var isInterpreterAvailable: Bool {
-        return self.interpreterAvailable
+        return EmbeddedPython.shared.isAvailable
     }
 
-    private var interpreterAvailable: Bool {
-        #if TROLLGRAM_PYTHON
-        return true
-        #else
-        return false
-        #endif
-    }
+    // MARK: - Interpreter
 
     private func ensureInterpreter() -> Bool {
-        guard self.interpreterAvailable else {
-            self.appendLog("[stub] Python.xcframework not linked")
+        guard EmbeddedPython.shared.isAvailable else {
             return false
         }
-        if self.pythonInitialized {
-            return true
+        if !self.bridgeRegistered {
+            #if canImport(Python)
+            PythonBridge.register(BridgeHandlers(
+                sendMessage: { [weak self] _, _, _ in
+                    _ = self
+                },
+                editMessage: { _, _, _ in },
+                showToast: { text in
+                    self.appendLog("[toast] \(text)")
+                },
+                showUndo: { title, text in
+                    self.appendLog("[undo] \(title): \(text)")
+                },
+                log: { text in
+                    self.appendLog(text)
+                },
+                pluginDataDirectory: { [weak self] in
+                    self?.dataDirectory ?? ""
+                },
+                runOnUIThread: { name in
+                    self.appendLog("[ui] \(name)")
+                },
+                currentAccount: { "0" }
+            ))
+            #endif
+            self.bridgeRegistered = true
         }
-        self.pythonInitialized = true
-        return true
+        return EmbeddedPython.shared.start(pluginDirectory: self.pluginsDirectory, dataDirectory: self.dataDirectory, bridgeRegistered: self.bridgeRegistered)
     }
 
     // MARK: - Discovery
@@ -100,13 +113,12 @@ public final class PythonPluginManager {
                 let enabled = self.loadEnabledIds()
                 for entry in entries where entry.hasSuffix(".py") {
                     let id = (entry as NSString).deletingPathExtension
-                    let path = self.pluginsDirectory + "/" + entry
                     found.append(Plugin(
                         id: id,
-                        path: path,
+                        path: self.pluginsDirectory + "/" + entry,
                         title: id,
                         description: "",
-                        isEnabled: enabled.contains(id) || enabled.isEmpty,
+                        isEnabled: enabled.isEmpty || enabled.contains(id),
                         loadError: nil
                     ))
                 }
@@ -122,7 +134,7 @@ public final class PythonPluginManager {
         }
     }
 
-    /// Installs a `.py` file (dropped from the chat input) into `Plugins/`.
+    /// Installs a `.py` file dropped from a chat message.
     @discardableResult
     public func installPlugin(at path: String) -> Bool {
         let fm = FileManager.default
@@ -170,14 +182,20 @@ public final class PythonPluginManager {
         return self.stateValue.with { $0.plugins.contains(where: { $0.isEnabled }) }
     }
 
-    /// Intercepts outgoing messages; returns `true` when the plugin chain
-    /// asked to cancel sending. Dispatched from `ChatController.sendMessages`.
+    /// Intercepts outgoing messages; returns `true` when a plugin cancelled sending.
     public func dispatchSendMessageHook(peerId: Any, messages: inout [Any]) -> Bool {
         guard self.hasEnabledPlugins, self.ensureInterpreter() else {
             return false
         }
-        // Plugin execution happens through the embedded interpreter. Until
-        // `Python.xcframework` is linked the hook is a pass-through.
+        let text = messages.first.map { "\($0)" } ?? ""
+        let enabled = self.stateValue.with { $0.plugins.filter { $0.isEnabled } }
+        for plugin in enabled {
+            let result = EmbeddedPython.shared.dispatchSendMessageHook(module: plugin.id, text: text)
+            if result == 2 {
+                self.appendLog("\(plugin.id) cancelled outgoing message")
+                return true
+            }
+        }
         return false
     }
 
@@ -205,8 +223,6 @@ public final class PythonPluginManager {
         }
         try? data.write(to: URL(fileURLWithPath: self.settingsPath(forPlugin: id)))
     }
-
-    // MARK: - Enabled ids persistence
 
     private var enabledIdsPath: String {
         return self.dataDirectory + "/enabled.json"

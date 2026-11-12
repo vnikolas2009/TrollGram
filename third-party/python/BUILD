@@ -3,25 +3,23 @@ load(
     "apple_static_xcframework_import",
 )
 
-# Python 3.11 runtime used by the exteraGram-compatible plugin engine.
+# Python 3.11 runtime for the exteraGram-compatible plugin engine.
 #
-# Drop the prebuilt `Python.xcframework` (PYTHON.xcframework release, device +
-# simulator slices, iOS min 13.0) into this directory. Until the binary is
-# present the target exports no sources and `PythonPluginManager` falls back
-# to its stub mode, so the app still builds.
-_PYTHON_SLICES = glob(["Python.xcframework/**"])
-
+# Slices are fetched by `build-system/setup_python.py` (device + simulator,
+# static Python.framework). Bazel also accepts the headers at
+# `include/python3.11`, which makes `import Python` work in Swift.
 apple_static_xcframework_import(
     name = "Python",
-    xcframework_imports = _PYTHON_SLICES,
+    xcframework_imports = glob(["Python.xcframework/**"]),
     visibility = [
         "//visibility:public",
     ],
 )
 
+# Stdlib copied into the app bundle (resolved through PYTHONHOME/python3.11).
 filegroup(
     name = "PythonStdlib",
-    srcs = glob(["stdlib/**"], allow_empty = True),
+    srcs = glob(["python3.11/**"], allow_empty = True),
     visibility = [
         "//visibility:public",
     ],

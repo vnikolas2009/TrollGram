@@ -18,12 +18,13 @@ private enum TrollPluginsEntry: ItemListNodeEntry {
     case header(id: Int32, text: String)
     case notice(id: Int32, text: String)
     case plugin(id: Int32, plugin: PythonPluginManager.Plugin)
+    case importPlugin(id: Int32, text: String)
     case logs(id: Int32, text: String)
     case clearLogs(id: Int32, text: String)
 
     var section: ItemListSectionId {
         switch self {
-        case .header, .notice:
+        case .header, .notice, .importPlugin:
             return TrollPluginsSection.install.rawValue
         case .plugin:
             return TrollPluginsSection.plugins.rawValue
@@ -34,7 +35,7 @@ private enum TrollPluginsEntry: ItemListNodeEntry {
 
     var stableId: Int32 {
         switch self {
-        case let .header(id, _), let .notice(id, _), let .plugin(id, _), let .logs(id, _), let .clearLogs(id, _):
+        case let .header(id, _), let .notice(id, _), let .plugin(id, _), let .importPlugin(id, _), let .logs(id, _), let .clearLogs(id, _):
             return id
         }
     }
@@ -62,6 +63,17 @@ private enum TrollPluginsEntry: ItemListNodeEntry {
                     arguments.togglePlugin(plugin.id, value)
                 }
             )
+        case let .importPlugin(_, text):
+            return ItemListDisclosureItem(
+                presentationData: presentationData,
+                title: text,
+                label: "",
+                sectionId: self.section,
+                style: .blocks,
+                action: {
+                    arguments.importPlugins()
+                }
+            )
         case let .logs(_, text):
             return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
         case let .clearLogs(_, text):
@@ -83,11 +95,13 @@ private final class TrollPluginsArguments {
     let context: AccountContext
     let togglePlugin: (String, Bool) -> Void
     let clearLogs: () -> Void
+    let importPlugins: () -> Void
 
-    init(context: AccountContext, togglePlugin: @escaping (String, Bool) -> Void, clearLogs: @escaping () -> Void) {
+    init(context: AccountContext, togglePlugin: @escaping (String, Bool) -> Void, clearLogs: @escaping () -> Void, importPlugins: @escaping () -> Void) {
         self.context = context
         self.togglePlugin = togglePlugin
         self.clearLogs = clearLogs
+        self.importPlugins = importPlugins
     }
 }
 
@@ -96,6 +110,7 @@ public func trollPluginsController(context: AccountContext) -> ViewController {
     PythonPluginManager.shared.reload()
 
     let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+    let installer = PythonPluginsInstaller()
     let arguments = TrollPluginsArguments(
         context: context,
         togglePlugin: { id, enabled in
@@ -103,6 +118,11 @@ public func trollPluginsController(context: AccountContext) -> ViewController {
         },
         clearLogs: {
             PythonPluginManager.shared.clearLogs()
+        },
+        importPlugins: {
+            installer.present(from: context, presenter: { picker in
+                TrollPluginsPresenter.shared.navigationController?.present(picker, animated: true)
+            })
         }
     )
 
@@ -128,10 +148,12 @@ public func trollPluginsController(context: AccountContext) -> ViewController {
 
         entries.append(.header(id: nextId(), text: "PLUGINS DIRECTORY"))
         entries.append(.notice(id: nextId(), text: PythonPluginManager.shared.pluginsDirectoryPath))
+        entries.append(.importPlugin(id: nextId(), text: "Import .py File"))
+        entries.append(.notice(id: nextId(), text: "Or send a .py file to any chat and open it on this device."))
 
         entries.append(.header(id: nextId(), text: "INSTALLED (\(state.plugins.count))"))
         if state.plugins.isEmpty {
-            entries.append(.notice(id: nextId(), text: "No plugins. Send a .py file to any chat and tap it to install."))
+            entries.append(.notice(id: nextId(), text: "No plugins installed."))
         } else {
             for plugin in state.plugins {
                 entries.append(.plugin(id: nextId(), plugin: plugin))
@@ -148,5 +170,11 @@ public func trollPluginsController(context: AccountContext) -> ViewController {
     }
 
     let controller = ItemListController(context: context, state: signal)
+    TrollPluginsPresenter.shared.navigationController = controller.navigationController
     return controller
+}
+
+final class TrollPluginsPresenter {
+    static let shared = TrollPluginsPresenter()
+    weak var navigationController: UINavigationController?
 }

@@ -1,10 +1,18 @@
-# Python.xcframework (Python 3.11, iOS device + simulator)
-#
-# The prebuilt static framework is not tracked in git (about 100 MB of binaries).
-# Place it at `third-party/python/Python.xcframework/` before building, e.g.:
-#
-#   cd third-party/python
-#   curl -L -o python.zip https://github.com/beeware/Python-Apple-support/releases/download/3.11-b8/Python-3.11-iOS-support.b8.tar.gz
-#   tar -xzf python.zip && mv Python.xcframework .
-#
-# Bazel target: //third-party/python:Python
+# Python 3.11 runtime (Python.xcframework)
+
+Not tracked in git (binaries). Fetch it with:
+
+    python3 build-system/setup_python.py
+
+That script downloads the official Python-Apple-support 3.11 iOS build and
+provisions:
+
+| path | purpose |
+| --- | --- |
+| `third-party/python/Python.xcframework/` | static `Python.framework` slices (device arm64 + simulator) |
+| `build/python-ios/python3.11/` | shared stdlib, copied into the app bundle |
+
+Bazel target: `//third-party/python:Python`.
+
+Bundling into the app happens in `Telegram/BUILD` (`python_stdlib` filegroup
+plus `PYTHONHOME` set by `EmbeddedPython`).

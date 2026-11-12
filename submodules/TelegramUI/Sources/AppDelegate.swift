@@ -73,6 +73,8 @@ import MTProtoRustEngine
 import AlertComponent
 #endif
 
+import SGTrollPrivacyCore
+
 private let handleVoipNotifications = false
 
 private func isTonTransferUrl(_ url: URL) -> Bool {
@@ -363,6 +365,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         precondition(!testIsLaunched)
         testIsLaunched = true
         NSLog("[SG.Launch] didFinishLaunching") // MARK: Swiftgram
+        TrollPrivacyBootstrap.activate() // TrollGram: privacy gates before networking
         
         let _ = voipTokenPromise.get().start(next: { token in
             self.voipDeviceToken.set(.single(token))

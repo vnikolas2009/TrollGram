@@ -40,6 +40,11 @@ func _internal_deleteEphemeralReplacements(transaction: Transaction, anchorIds: 
 }
 
 public func _internal_deleteMessages(transaction: Transaction, mediaBox: MediaBox, ids: [MessageId], deleteMedia: Bool = true, manualAddMessageThreadStatsDifference: ((MessageThreadKey, Int, Int) -> Void)? = nil) {
+    // TrollGram Anti-Delete: snapshot the messages into the local archive
+    // before they are removed from the database.
+    if TrollPrivacyRuntime.antiDeleteEnabled {
+        TrollMessageArchive.shared.capture(transaction: transaction, ids: ids)
+    }
     var resourceIds: [MediaResourceId] = []
     if deleteMedia {
         for id in ids {
