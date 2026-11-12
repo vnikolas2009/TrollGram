@@ -22,10 +22,12 @@ import AppBundle
 import WebKit
 import PeerNameColorScreen
 import UndoUI
+import SGTrollPrivacy
 
 
 private enum SGControllerSection: Int32, SGItemListSection {
     case search
+    case privacy
     case trending
     case content
     case tabs
@@ -45,6 +47,7 @@ private enum SGControllerSection: Int32, SGItemListSection {
 }
 
 private enum SGBoolSetting: String {
+    case trollPrivacy
     case hidePhoneInSettings
     case showTabNames
     case showContactsTab
@@ -153,6 +156,11 @@ private func SGControllerEntries(presentationData: PresentationData, callListSet
     
     entries.append(.searchInput(id: id.count, section: .search, title: NSAttributedString(string: "🔍"), text: state.searchQuery ?? "", placeholder: strings.Common_Search))
     
+    // MARK: TrollGram privacy block (all features unlocked locally)
+    entries.append(.header(id: id.count, section: .privacy, text: "PRIVACY", badge: newStr))
+    for toggle in TrollPrivacySettings.allToggles {
+        entries.append(.toggle(id: id.count, section: .privacy, settingName: .trollPrivacy, value: toggle.isOn, text: toggle.title, enabled: true))
+    }
     
     if SGSimpleSettings.shared.canUseNY {
         entries.append(.header(id: id.count, section: .trending, text: i18n("Settings.NY.Header", lang), badge: newStr))
@@ -505,6 +513,8 @@ public func sgSettingsController(context: AccountContext/*, focusOnItemTag: Int?
             SGSimpleSettings.shared.forceEmojiTab = value
         case .forceBuiltInMic:
             SGSimpleSettings.shared.forceBuiltInMic = value
+        case .trollPrivacy:
+            break
         case .hideChannelBottomButton:
             SGSimpleSettings.shared.hideChannelBottomButton = !value
         case .secondsInMessages:
