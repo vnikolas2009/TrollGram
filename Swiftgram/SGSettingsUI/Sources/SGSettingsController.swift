@@ -23,6 +23,7 @@ import WebKit
 import PeerNameColorScreen
 import UndoUI
 import SGTrollPrivacy
+import SGTrollPluginsUI
 
 
 private enum SGControllerSection: Int32, SGItemListSection {
@@ -132,6 +133,7 @@ private enum SGSliderSetting: String {
 private enum SGDisclosureLink: String {
     case contentSettings
     case languageSettings
+    case trollPlugins
 }
 
 private struct PeerNameColorScreenState: Equatable {
@@ -158,6 +160,7 @@ private func SGControllerEntries(presentationData: PresentationData, callListSet
     
     // MARK: TrollGram privacy block (all features unlocked locally)
     entries.append(.header(id: id.count, section: .privacy, text: "PRIVACY", badge: newStr))
+    entries.append(.disclosure(id: id.count, section: .privacy, link: .trollPlugins, text: "Plugins"))
     for toggle in TrollPrivacySettings.allToggles {
         entries.append(.toggle(id: id.count, section: .privacy, settingName: .trollPrivacy, value: toggle.isOn, text: toggle.title, enabled: true))
     }
@@ -699,6 +702,8 @@ public func sgSettingsController(context: AccountContext/*, focusOnItemTag: Int?
         switch (link) {
             case .languageSettings:
                 pushControllerImpl?(context.sharedContext.makeLocalizationListController(context: context))
+            case .trollPlugins:
+                pushControllerImpl?(trollPluginsController(context: context))
             case .contentSettings:
                 let _ = (getSGSettingsURL(context: context) |> deliverOnMainQueue).start(next: { [weak context] url in
                     guard let strongContext = context else {
