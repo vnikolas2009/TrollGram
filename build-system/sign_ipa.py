@@ -76,7 +76,12 @@ def import_certificate(p12_path, password, keychain):
         "-S", "apple-tool:,apple:,codesign:",
         "-k", keychain_password, keychain,
     ])
-    run(["security", "list-keychains", "-d", "user", "-s", keychain, "login.keychain"])
+    # Prepend the throw-away keychain to the existing search list. The list
+    # contains "login.keychain-db" on modern macOS, so it must be reused
+    # instead of hardcoding "login.keychain".
+    existing = run(["security", "list-keychains", "-d", "user"]).stdout
+    existing_keychains = [line.strip().strip('"') for line in existing.splitlines() if line.strip()]
+    run(["security", "list-keychains", "-d", "user", "-s", keychain] + existing_keychains)
 
     listing = run(["security", "find-identity", "-v", "-p", "codesigning", keychain]).stdout
     match = re.search(r'\)\s+"([^"]+)"', listing)
