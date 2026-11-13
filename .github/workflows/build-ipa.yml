@@ -197,8 +197,8 @@ jobs:
         run: |
           set -o pipefail
           set -x
-          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          echo "$PROFILE_BASE64" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
+          printf '%s' "$P12_BASE64" | openssl base64 -d -A > "$RUNNER_TEMP/cert.p12"
+          printf '%s' "$PROFILE_BASE64" | openssl base64 -d -A > "$RUNNER_TEMP/profile.mobileprovision"
           python3 build-system/sign_ipa.py \
             --input "$RUNNER_TEMP/TrollGram.ipa" \
             --output "$RUNNER_TEMP/TrollGram-signed.ipa" \
