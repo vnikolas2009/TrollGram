@@ -85,7 +85,7 @@ final class EmbeddedPython {
         do {
             try fileManager.createDirectory(atPath: support, withIntermediateDirectories: true)
             try? fileManager.removeItem(atPath: home)
-            guard SSZipArchive.unzipFileAtPath(archive, toDestination: home) else {
+            guard SSZipArchive.unzipFile(atPath: archive, toDestination: home) else {
                 NSLog("[TrollGram] Failed to extract python.zip")
                 return nil
             }
