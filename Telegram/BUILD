@@ -2114,7 +2114,6 @@ ios_application(
         ":PostboxFramework",
         ":TelegramCoreFramework",
         ":TelegramUIFramework",
-        "//third-party/python:Python", # TrollGram: plugin interpreter
     ],
     strings = [
         ":AppStringResources",

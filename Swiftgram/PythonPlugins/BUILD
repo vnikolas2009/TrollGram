@@ -17,7 +17,6 @@ swift_library(
     deps = [
         "//submodules/SSignalKit/SwiftSignalKit:SwiftSignalKit",
         "//third-party/ZipArchive:ZipArchive",
-        "//third-party/python:Python",
     ],
     visibility = [
         "//visibility:public",
