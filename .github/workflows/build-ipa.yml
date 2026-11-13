@@ -23,6 +23,10 @@ on:
   push:
     tags:
       - "v*"
+  # One-off off-peak run: Sat 2026-11-14 03:17 UTC (06:17 MSK, US night, weekend). Fires once per year on
+  # Nov 14; inputs fall back to release_arm64 / keep_going=false / create_release=true. Remove after use.
+  schedule:
+    - cron: "17 3 14 11 *"
 
 permissions:
   contents: write
