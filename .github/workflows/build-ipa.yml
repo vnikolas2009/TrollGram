@@ -118,8 +118,9 @@ jobs:
             --xcodeManagedCodesigning \
             --configuration="$CONFIGURATION" \
             --buildNumber="$BUILD_NUMBER" \
-            --overrideXcodeVersion="$XCODE_VERSION" \
+            --overrideXcodeVersion \
             --disableProvisioningProfiles \
+            --continueOnError \
             --bazelProfile="/Users/Shared/telegram-bazel-cache/profile.json" \
             2>&1 | tee -a "$BUILD_LOG"
 
