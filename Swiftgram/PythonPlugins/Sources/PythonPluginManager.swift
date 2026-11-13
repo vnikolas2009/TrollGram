@@ -19,7 +19,7 @@ public final class PythonPluginManager {
         public var loadError: String?
     }
 
-    public struct State {
+    public struct State: Equatable {
         public var plugins: [Plugin] = []
         public var isLoading = false
         public var logs: [String] = []
