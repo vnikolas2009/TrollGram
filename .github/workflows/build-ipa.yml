@@ -15,6 +15,11 @@ on:
         required: false
         default: true
         type: boolean
+      keep_going:
+        description: "Keep going after a compile error (slower, but reports more errors per run)"
+        required: false
+        default: false
+        type: boolean
   push:
     tags:
       - "v*"
@@ -30,6 +35,7 @@ concurrency:
 env:
   SOURCE_DIR: /Users/Shared/trollgram-ios
   BAZEL_USER_ROOT: /private/var/tmp/_bazel_trollgram
+  BUILD_CACHE_DIR: /Users/Shared/trollgram-bazel-cache
   BUILD_LOG: /Users/Shared/trollgram-build.log
 
 jobs:
@@ -37,6 +43,10 @@ jobs:
     name: Build TrollGram.ipa
     runs-on: macos-latest
     timeout-minutes: 360
+    env:
+      P12_BASE64: ${{ secrets.P12_BASE64 }}
+      P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+      PROFILE_BASE64: ${{ secrets.MOBILEPROVISION_BASE64 }}
 
     steps:
       - name: Checkout
@@ -82,15 +92,16 @@ jobs:
           touch "$BUILD_LOG"
           sudo chown "$(id -u):$(id -g)" "$BUILD_LOG"
 
-      - name: Cache Bazel
+      # Only the action/repository cache is persisted: it is what makes a
+      # re-run cheap. The Bazel output base is several extra GB and would push
+      # the entry over the 10 GB per-repository cache limit.
+      - name: Restore Bazel cache
         uses: actions/cache@v4
         with:
-          path: |
-            /Users/Shared/telegram-bazel-cache
-            ${{ env.BAZEL_USER_ROOT }}
-          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'versions.json') }}
+          path: ${{ env.BUILD_CACHE_DIR }}
+          key: bazel-v2-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'versions.json') }}
           restore-keys: |
-            bazel-${{ runner.os }}-
+            bazel-v2-${{ runner.os }}-
 
       - name: Compute version
         run: |
@@ -110,8 +121,19 @@ jobs:
           set -o pipefail
           set -x
           cd "$SOURCE_DIR"
-          mkdir -p /Users/Shared/telegram-bazel-cache
+          mkdir -p "$BUILD_CACHE_DIR"
           python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+
+          EXTRA_ARGS=(
+            --cacheDir="$BUILD_CACHE_DIR"
+            --skipDsym
+            --enableParallelSwiftmoduleGeneration
+            --bazelProfile="$RUNNER_TEMP/bazel-profile.json"
+          )
+          if [ "${{ github.event.inputs.keep_going }}" = "true" ]; then
+            EXTRA_ARGS+=(--continueOnError)
+          fi
+
           python3 -u build-system/Make/Make.py \
             --bazelUserRoot="$BAZEL_USER_ROOT" \
             --overrideXcodeVersion \
@@ -120,8 +142,7 @@ jobs:
             --codesigningInformationPath=build-system/fake-codesigning \
             --configuration="$CONFIGURATION" \
             --buildNumber="$BUILD_NUMBER" \
-            --continueOnError \
-            --bazelProfile="/Users/Shared/telegram-bazel-cache/profile.json" \
+            "${EXTRA_ARGS[@]}" \
             2>&1 | tee -a "$BUILD_LOG"
 
       - name: Package unsigned IPA
@@ -160,11 +181,43 @@ jobs:
           echo "IPA_SIZE=$(du -h TrollGram.ipa | cut -f1)" >> "$GITHUB_ENV"
           ls -lh TrollGram.ipa
 
+      # Optional: sign the IPA with the certificate from the repository
+      # secrets. Failures do not fail the build - the unsigned IPA is still
+      # published (TrollStore installs it as is).
+      - name: Sign IPA with personal certificate
+        id: sign
+        if: env.P12_BASE64 != '' && env.PROFILE_BASE64 != ''
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          set -x
+          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          echo "$PROFILE_BASE64" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
+          python3 build-system/sign_ipa.py \
+            --input "$RUNNER_TEMP/TrollGram.ipa" \
+            --output "$RUNNER_TEMP/TrollGram-signed.ipa" \
+            --p12 "$RUNNER_TEMP/cert.p12" \
+            --password "$P12_PASSWORD" \
+            --profile "$RUNNER_TEMP/profile.mobileprovision" \
+            2>&1 | tee "$RUNNER_TEMP/sign.log"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Report signing failure
+        if: steps.sign.outcome == 'failure'
+        run: |
+          if [ -f "$RUNNER_TEMP/sign.log" ]; then
+            tail -n 40 "$RUNNER_TEMP/sign.log" | while IFS= read -r line; do
+              echo "::error::sign: $(printf '%s' "$line" | cut -c1-900)"
+            done
+          else
+            echo "::error::sign: the signing step failed before producing a log"
+          fi
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: TrollGram-${{ env.APP_VERSION }}-${{ env.BUILD_NUMBER }}
-          path: ${{ runner.temp }}/TrollGram.ipa
+          path: ${{ runner.temp }}/TrollGram*.ipa
           if-no-files-found: error
           retention-days: 30
 
@@ -188,14 +241,23 @@ jobs:
           set -x
           TAG="${{ steps.release_meta.outputs.tag }}"
           TITLE="TrollGram $APP_VERSION ($BUILD_NUMBER)"
-          NOTES="Unsigned TrollGram $APP_VERSION build $BUILD_NUMBER ($IPA_SIZE).
+          FILES=("$RUNNER_TEMP/TrollGram.ipa")
+          SIGNED_NOTE=""
+          if [ -f "$RUNNER_TEMP/TrollGram-signed.ipa" ]; then
+            FILES+=("$RUNNER_TEMP/TrollGram-signed.ipa")
+            SIGNED_NOTE="
+          TrollGram-signed.ipa is signed with the repository certificate and a
+          provisioning profile, use it for Sideloadly / AltStore."
+          fi
+          NOTES="TrollGram $APP_VERSION build $BUILD_NUMBER ($IPA_SIZE).
 
-          Install with TrollStore or Sideloadly. No provisioning profile is embedded."
+          TrollGram.ipa is unsigned: install it with TrollStore.
+          No provisioning profile is embedded.${SIGNED_NOTE}"
 
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release upload "$TAG" "$RUNNER_TEMP/TrollGram.ipa" --clobber --repo "$GITHUB_REPOSITORY"
+            gh release upload "$TAG" "${FILES[@]}" --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$TAG" "$RUNNER_TEMP/TrollGram.ipa" \
+            gh release create "$TAG" "${FILES[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --title "$TITLE" \
               --notes "$NOTES" \

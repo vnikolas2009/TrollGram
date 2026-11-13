@@ -1,9 +1,12 @@
 name: Sign TrollGram IPA
 
-# Fast re-sign of the already built unsigned IPA (no Bazel build, ~2-3 min).
+# Manual re-sign of an already published unsigned IPA (no Bazel build, ~2 min).
+# The main build workflow signs automatically when the secrets are present;
+# this workflow is for re-signing an older release.
+#
 # Required repository secrets:
-#   P12_BASE64            base64 of the .p12 certificate
-#   P12_PASSWORD          password of the .p12
+#   P12_BASE64             base64 of the .p12 certificate
+#   P12_PASSWORD           password of the .p12
 #   MOBILEPROVISION_BASE64 base64 of the .mobileprovision
 
 on:
@@ -13,29 +16,30 @@ on:
         description: "Release tag with TrollGram.ipa (empty = latest release)"
         required: false
         default: ""
-  workflow_run:
-    workflows: ["Build and Release TrollGram IPA"]
-    types: [completed]
 
 permissions:
   contents: write
 
+env:
+  P12_BASE64: ${{ secrets.P12_BASE64 }}
+  P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+  PROFILE_BASE64: ${{ secrets.MOBILEPROVISION_BASE64 }}
+
 jobs:
   sign:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: macos-latest
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
-      P12_BASE64: ${{ secrets.P12_BASE64 }}
-      P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
-      PROFILE_BASE64: ${{ secrets.MOBILEPROVISION_BASE64 }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Check secrets
         id: check
         run: |
           if [ -z "$P12_BASE64" ] || [ -z "$PROFILE_BASE64" ]; then
-            echo "::warning::Secrets P12_BASE64 / P12_PASSWORD / MOBILEPROVISION_BASE64 are not set - skipping signing"
+            echo "::error::Secrets P12_BASE64 / MOBILEPROVISION_BASE64 are not set"
             echo "ok=false" >> "$GITHUB_OUTPUT"
           else
             echo "ok=true" >> "$GITHUB_OUTPUT"
@@ -55,7 +59,7 @@ jobs:
             echo "No release with TrollGram.ipa - falling back to the latest successful build artifact"
             RUN=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow build-ipa.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // ""')
             if [ -z "$RUN" ]; then
-              echo "::error::No unsigned TrollGram.ipa yet: there is no release and no successful 'Build and Release TrollGram IPA' run. Wait for the build to finish, then re-run."
+              echo "::error::No unsigned TrollGram.ipa yet: there is no release and no successful 'Build and Release TrollGram IPA' run."
               exit 1
             fi
             gh run download "$RUN" --repo "$GITHUB_REPOSITORY" --dir art
@@ -64,68 +68,18 @@ jobs:
           fi
           ls -lh TrollGram.ipa
 
-      - name: Import certificate
-        if: steps.check.outputs.ok == 'true'
-        run: |
-          KC="$RUNNER_TEMP/sign.keychain-db"; KCP=$(uuidgen)
-          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          echo "$PROFILE_BASE64" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
-          security create-keychain -p "$KCP" "$KC"
-          security set-keychain-settings -lut 21600 "$KC"
-          security unlock-keychain -p "$KCP" "$KC"
-          security import "$RUNNER_TEMP/cert.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KC"
-          security set-key-partition-list -S apple-tool:,apple: -k "$KCP" "$KC" > /dev/null
-          security list-keychains -d user -s "$KC" login.keychain
-          security find-identity -v -p codesigning "$KC"
-          IDENTITY=$(security find-identity -v -p codesigning "$KC" | awk '/\)/{print $2; exit}')
-          [ -n "$IDENTITY" ] || { echo "::error::No valid signing identity in the .p12 (wrong password?)"; exit 1; }
-          echo "IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
-
       - name: Sign
         if: steps.check.outputs.ok == 'true'
         run: |
-          set -eu
-          cd "$RUNNER_TEMP"
-          security cms -D -i profile.mobileprovision > profile.plist
-          PB=/usr/libexec/PlistBuddy
-          APPID=$($PB -c "Print :Entitlements:application-identifier" profile.plist)   # TEAM.bundle
-          TEAM=$($PB -c "Print :Entitlements:com.apple.developer.team-identifier" profile.plist)
-          BUNDLE=${APPID#*.}
-          echo "Bundle id from profile: $BUNDLE (team $TEAM)"
-
-          rm -rf work && mkdir work && cd work
-          unzip -q ../in/TrollGram.ipa
-          APP=$(ls -d Payload/*.app | head -1)
-
-          # One profile = one bundle id: extensions/watch cannot be signed with it.
-          rm -rf "$APP/PlugIns" "$APP/Extensions" "$APP/Watch" "$APP/_CodeSignature"
-          $PB -c "Set :CFBundleIdentifier $BUNDLE" "$APP/Info.plist"
-          cp ../profile.mobileprovision "$APP/embedded.mobileprovision"
-
-          cat > ../ent.plist <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict>
-            <key>application-identifier</key><string>$APPID</string>
-            <key>com.apple.developer.team-identifier</key><string>$TEAM</string>
-            <key>get-task-allow</key><true/>
-            <key>keychain-access-groups</key><array><string>$TEAM.*</string></array>
-            <key>com.apple.developer.kernel.increased-memory-limit</key><true/>
-            <key>com.apple.developer.kernel.extended-virtual-addressing</key><true/>
-          </dict></plist>
-          EOF
-          sed -i '' 's/^ *//' ../ent.plist
-
-          # inside-out: nested code first, then the app
-          find "$APP" \( -name "*.framework" -o -name "*.dylib" -o -name "*.appex" \) -not -path "*/PlugIns/*" -print0 \
-            | sort -rz | xargs -0 -n1 codesign --force --sign "$IDENTITY" --timestamp=none
-          codesign --force --sign "$IDENTITY" --entitlements ../ent.plist --timestamp=none "$APP"
-          codesign --verify --deep --strict --verbose=2 "$APP"
-          codesign -d --entitlements - "$APP" 2>&1 | head -20
-
-          rm -f ../TrollGram-signed.ipa
-          zip -qry ../TrollGram-signed.ipa Payload
-          ls -lh ../TrollGram-signed.ipa
+          set -x
+          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          echo "$PROFILE_BASE64" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
+          python3 build-system/sign_ipa.py \
+            --input "$RUNNER_TEMP/in/TrollGram.ipa" \
+            --output "$RUNNER_TEMP/TrollGram-signed.ipa" \
+            --p12 "$RUNNER_TEMP/cert.p12" \
+            --password "$P12_PASSWORD" \
+            --profile "$RUNNER_TEMP/profile.mobileprovision"
 
       - name: Upload artifact
         if: steps.check.outputs.ok == 'true'
@@ -137,10 +91,6 @@ jobs:
           retention-days: 30
 
       - name: Attach to release
-        if: steps.check.outputs.ok == 'true'
+        if: steps.check.outputs.ok == 'true' && env.TAG != ''
         run: |
-          if [ -n "${TAG:-}" ]; then
-            gh release upload "$TAG" "$RUNNER_TEMP/TrollGram-signed.ipa" --clobber --repo "$GITHUB_REPOSITORY"
-          else
-            echo "No release to attach to - signed IPA is available as the TrollGram-signed artifact"
-          fi
+          gh release upload "$TAG" "$RUNNER_TEMP/TrollGram-signed.ipa" --clobber --repo "$GITHUB_REPOSITORY"
