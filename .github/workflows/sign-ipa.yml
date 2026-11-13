@@ -44,11 +44,24 @@ jobs:
       - name: Download unsigned IPA
         if: steps.check.outputs.ok == 'true'
         run: |
-          TAG="${{ github.event.inputs.tag }}"
-          if [ -z "$TAG" ]; then TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName); fi
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/in" && cd "$RUNNER_TEMP/in"
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'TrollGram.ipa' --clobber
+          TAG="${{ github.event.inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName // ""')
+          fi
+          if [ -n "$TAG" ] && gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'TrollGram.ipa' --clobber; then
+            echo "TAG=$TAG" >> "$GITHUB_ENV"
+          else
+            echo "No release with TrollGram.ipa - falling back to the latest successful build artifact"
+            RUN=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow build-ipa.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // ""')
+            if [ -z "$RUN" ]; then
+              echo "::error::No unsigned TrollGram.ipa yet: there is no release and no successful 'Build and Release TrollGram IPA' run. Wait for the build to finish, then re-run."
+              exit 1
+            fi
+            gh run download "$RUN" --repo "$GITHUB_REPOSITORY" --dir art
+            find art -name 'TrollGram.ipa' -exec mv {} TrollGram.ipa \;
+            [ -f TrollGram.ipa ] || { echo "::error::TrollGram.ipa not found in artifacts of run $RUN"; exit 1; }
+          fi
           ls -lh TrollGram.ipa
 
       - name: Import certificate
@@ -126,4 +139,8 @@ jobs:
       - name: Attach to release
         if: steps.check.outputs.ok == 'true'
         run: |
-          gh release upload "$TAG" "$RUNNER_TEMP/TrollGram-signed.ipa" --clobber --repo "$GITHUB_REPOSITORY"
+          if [ -n "${TAG:-}" ]; then
+            gh release upload "$TAG" "$RUNNER_TEMP/TrollGram-signed.ipa" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            echo "No release to attach to - signed IPA is available as the TrollGram-signed artifact"
+          fi
