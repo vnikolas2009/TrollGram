@@ -93,7 +93,9 @@ jobs:
         timeout-minutes: 15
         run: |
           set -x
-          python3 build-system/setup_python.py
+          --configuration="$CONFIGURATION" \
+          --disableProvisioningProfiles \
+          --buildNumber="$BUILD_NUMBER" \
           du -sh third-party/python/Python.xcframework third-party/python/resources
 
       - name: Prepare build log
