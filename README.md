@@ -61,23 +61,35 @@ GitHub Actions: `.github/workflows/build-ipa.yml`.
 * `workflow_dispatch` — кнопка **Run workflow** в разделе Actions.
 * push тега `v*` — например `git tag v1.0 && git push --tags`.
 
-Workflow собирает приложение Bazel-ом, упаковывает `Payload/` в
-`TrollGram.ipa`, публикует артефакт и **создаёт GitHub Release** с файлом
-`TrollGram.ipa`. Если сборка падает, лог компилятора автоматически
-публикуется в issue `CI build log`.
+Workflow собирает приложение Bazel-ом (кэш действий и репозиториев
+сохраняется между запусками, dSYM не генерируются) и упаковывает `Payload/`
+в `TrollGram.ipa`.
+
+* `TrollGram.ipa` — неподписанный, ставится через TrollStore.
+* `TrollGram-signed.ipa` — появляется, если в репозитории заданы секреты
+  `P12_BASE64`, `P12_PASSWORD`, `MOBILEPROVISION_BASE64`: IPA
+  переподписывается сертификатом и профилем из секретов (Sideloadly/AltStore).
+  Ошибка переподписи не ломает сборку — неподписанный IPA публикуется всегда.
+
+Оба файла попадают в артефакт и в **GitHub Release**. Переподписать уже
+опубликованный IPA вручную можно workflow `Sign TrollGram IPA`
+(`workflow_dispatch`, параметр `tag`). Если сборка падает, лог компилятора
+автоматически публикуется в issue `CI build log`.
 
 Локальная сборка на macOS:
 
 ```bash
 python3 build-system/setup_python.py      # Python 3.11 + stdlib
 python3 build-system/Make/Make.py \
+  --cacheDir="$HOME/bazel-cache" \
   --bazelUserRoot="$HOME/bazel-trollgram" \
   build \
   --configurationPath=build-system/appstore-configuration.json \
+  --codesigningInformationPath=build-system/fake-codesigning \
   --configuration=release_arm64 \
   --buildNumber=1000 \
-  --disableProvisioningProfiles \
-  --overrideXcodeVersion="$(python3 -c 'import json;print(json.load(open("versions.json"))["xcode"])')"
+  --skipDsym \
+  --overrideXcodeVersion
 ```
 
 ### 5. Структура
