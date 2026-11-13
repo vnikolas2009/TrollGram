@@ -276,13 +276,17 @@ jobs:
         if: failure()
         run: |
           if [ ! -f "$BUILD_LOG" ]; then
-            echo "no build log at $BUILD_LOG"
+            echo "::error::no build log at $BUILD_LOG"
             exit 0
           fi
-          grep -a -E "error:|error \[|ERROR:|fatal error|FAILED:" "$BUILD_LOG" \
+          grep -a -E "error|Error|ERROR|fatal|FAILED|Traceback|Exception|not found|No such file|denied|Verification failure" "$BUILD_LOG" \
             | head -40 \
             | while IFS= read -r line; do
                 echo "::error::$(printf '%s' "$line" | cut -c1-900)"
+              done
+          tail -n 25 "$BUILD_LOG" \
+            | while IFS= read -r line; do
+                echo "::error::tail: $(printf '%s' "$line" | cut -c1-900)"
               done
           echo "annotations emitted"
 
@@ -313,9 +317,11 @@ jobs:
           head -c 60000 /tmp/report.md > /tmp/report-trimmed.md
           ISSUE=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "CI build log in:title" --json number --jq '.[0].number // empty' || true)
           if [ -z "$ISSUE" ]; then
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "CI build log" --body-file /tmp/report-trimmed.md || true
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "CI build log" --body-file /tmp/report-trimmed.md \
+              || echo "::error::could not publish the build log to an issue"
           else
-            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report-trimmed.md || true
+            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report-trimmed.md \
+              || echo "::error::could not comment on the build log issue"
           fi
 
       # Persist the action/repository cache even when the build fails, so the

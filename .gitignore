@@ -103,3 +103,8 @@ Swiftgram/PythonPlugins/**/__pycache__/
 /third-party/python/resources/
 /build/python-ios/
 *.log
+
+# TrollGram: local CI scratch files
+/payload.json
+/patch.json
+/resp.json
