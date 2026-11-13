@@ -4,6 +4,7 @@ import SwiftSignalKit
 import AccountContext
 import TelegramPresentationData
 import ItemListUI
+import Display
 import PresentationDataUtils
 import UndoUI
 import PythonPlugins
@@ -120,8 +121,11 @@ public func trollPluginsController(context: AccountContext) -> ViewController {
             PythonPluginManager.shared.clearLogs()
         },
         importPlugins: {
+            guard let navigationController = context.sharedContext.mainWindow?.viewController as? UINavigationController else {
+                return
+            }
             installer.present(from: context, presenter: { picker in
-                TrollPluginsPresenter.shared.navigationController?.present(picker, animated: true)
+                navigationController.present(picker, animated: true)
             })
         }
     )
@@ -170,11 +174,5 @@ public func trollPluginsController(context: AccountContext) -> ViewController {
     }
 
     let controller = ItemListController(context: context, state: signal)
-    TrollPluginsPresenter.shared.navigationController = controller.navigationController
     return controller
-}
-
-final class TrollPluginsPresenter {
-    static let shared = TrollPluginsPresenter()
-    weak var navigationController: UINavigationController?
 }

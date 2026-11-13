@@ -1,7 +1,6 @@
 import Foundation
 import Postbox
 import SwiftSignalKit
-import TelegramCore
 
 /// Local-only archive of deleted and edited messages (TrollGram Anti-Delete /
 /// Edit History).

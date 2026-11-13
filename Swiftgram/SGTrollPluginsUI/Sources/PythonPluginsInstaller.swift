@@ -3,6 +3,7 @@ import UIKit
 import TelegramPresentationData
 import UniformTypeIdentifiers
 import AccountContext
+import PythonPlugins
 
 public final class PythonPluginsInstaller {
     private weak var presentedController: UIViewController?

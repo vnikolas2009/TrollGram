@@ -1,25 +1,26 @@
 load(
     "@build_bazel_rules_apple//apple:apple.bzl",
-    "apple_static_xcframework_import",
+    "apple_dynamic_xcframework_import",
 )
 
 # Python 3.11 runtime for the exteraGram-compatible plugin engine.
 #
-# Slices are fetched by `build-system/setup_python.py` (device + simulator,
-# static Python.framework). Bazel also accepts the headers at
-# `include/python3.11`, which makes `import Python` work in Swift.
-apple_static_xcframework_import(
+# Fetched by `build-system/setup_python.py`; the binaries are not tracked in
+# git. `Python.framework` is a dylib, so it is imported dynamically and copied
+# into `Payload/TrollGram.app/Frameworks/` by the release workflow.
+apple_dynamic_xcframework_import(
     name = "Python",
-    xcframework_imports = glob(["Python.xcframework/**"]),
+    xcframework_imports = glob(["Python.xcframework/**"], allow_empty = True),
     visibility = [
         "//visibility:public",
     ],
 )
 
-# Stdlib copied into the app bundle (resolved through PYTHONHOME/python3.11).
+# Stdlib archive (`lib/python3.11/...`), unzipped on first launch by
+# `EmbeddedPython`. Bundled as data so the path stays flat and predictable.
 filegroup(
     name = "PythonStdlib",
-    srcs = glob(["python3.11/**"], allow_empty = True),
+    srcs = glob(["resources/python.zip"], allow_empty = True),
     visibility = [
         "//visibility:public",
     ],

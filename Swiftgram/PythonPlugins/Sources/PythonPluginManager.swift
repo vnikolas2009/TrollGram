@@ -28,7 +28,6 @@ public final class PythonPluginManager {
     private let queue = DispatchQueue(label: "app.trollgram.ios.plugins")
     private let statePromise = ValuePromise<State>(State(), ignoreRepeated: true)
     private let stateValue: Atomic<State>
-    private var bridgeRegistered = false
 
     private let pluginsDirectory: String
     private let dataDirectory: String
@@ -63,34 +62,11 @@ public final class PythonPluginManager {
         guard EmbeddedPython.shared.isAvailable else {
             return false
         }
-        if !self.bridgeRegistered {
-            #if canImport(Python)
-            PythonBridge.register(BridgeHandlers(
-                sendMessage: { [weak self] _, _, _ in
-                    _ = self
-                },
-                editMessage: { _, _, _ in },
-                showToast: { text in
-                    self.appendLog("[toast] \(text)")
-                },
-                showUndo: { title, text in
-                    self.appendLog("[undo] \(title): \(text)")
-                },
-                log: { text in
-                    self.appendLog(text)
-                },
-                pluginDataDirectory: { [weak self] in
-                    self?.dataDirectory ?? ""
-                },
-                runOnUIThread: { name in
-                    self.appendLog("[ui] \(name)")
-                },
-                currentAccount: { "0" }
-            ))
-            #endif
-            self.bridgeRegistered = true
+        let started = EmbeddedPython.shared.start(pluginDirectory: self.pluginsDirectory, dataDirectory: self.dataDirectory)
+        if started {
+            EmbeddedPython.shared.run("import trollgram_bridge")
         }
-        return EmbeddedPython.shared.start(pluginDirectory: self.pluginsDirectory, dataDirectory: self.dataDirectory, bridgeRegistered: self.bridgeRegistered)
+        return started
     }
 
     // MARK: - Discovery
@@ -230,7 +206,8 @@ public final class PythonPluginManager {
 
     private func loadEnabledIds() -> Set<String> {
         guard let data = FileManager.default.contents(atPath: self.enabledIdsPath),
-              let list = try? JSONSerialization.jsonObject(with: data) as? [String] else {
+              let json = try? JSONSerialization.jsonObject(with: data, options: []),
+              let list = json as? [String] else {
             return []
         }
         return Set(list)

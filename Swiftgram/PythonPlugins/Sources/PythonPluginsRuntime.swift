@@ -2,21 +2,17 @@ import Foundation
 
 /// Dispatch entry point used by `ChatController.sendMessages`.
 ///
-/// Kept dependency-free so the hook can be called from the core TelegramUI
-/// module without pulling the whole plugin host.
+/// Kept tiny so the hook in the core TelegramUI module stays readable; the
+/// real work lives in `PythonPluginManager`.
 public enum PythonPluginsRuntime {
     public static var isPluginHostAvailable: Bool {
-        #if TROLLGRAM_PLUGINS
-        return true
-        #else
-        return false
-        #endif
+        return PythonPluginManager.shared.isInterpreterAvailable
     }
 
     /// Returns `true` when a plugin cancelled sending.
     @discardableResult
     public static func dispatchSendMessageHook(peerId: Any, messages: inout [Any]) -> Bool {
-        guard self.isPluginHostAvailable, PythonPluginManager.shared.hasEnabledPlugins else {
+        guard PythonPluginManager.shared.hasEnabledPlugins else {
             return false
         }
         return PythonPluginManager.shared.dispatchSendMessageHook(peerId: peerId, messages: &messages)

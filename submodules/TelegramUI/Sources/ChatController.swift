@@ -1,4 +1,5 @@
 import SGSimpleSettings
+import PythonPlugins
 import Foundation
 import UIKit
 import Postbox
@@ -9421,7 +9422,6 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         }
 
         // TrollGram: exteraGram-compatible plugins may cancel or rewrite outgoing messages.
-        var messages = messages
         var pluginMessages: [Any] = messages.map { $0 as Any }
         if PythonPluginsRuntime.dispatchSendMessageHook(peerId: peerId, messages: &pluginMessages) {
             return

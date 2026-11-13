@@ -1,13 +1,18 @@
 #if canImport(Python)
-import Foundation
 import Python
 #endif
 import Foundation
+import ZipArchive
 
 /// Thin Swift wrapper around the embedded CPython 3.11 interpreter.
 ///
 /// Compiled only when the `Python` module (`Python.xcframework`) is linked;
 /// otherwise every call is a no-op and plugins stay in stub mode.
+///
+/// Only the stable "run this snippet" surface of the CPython API is used here.
+/// The `trollgram_bridge` extension module that plugins import is implemented
+/// in Python (`stdlib/trollgram_bridge.py`), which keeps the Swift side free
+/// of `PyModuleDef`/`PyMethodDef` plumbing.
 final class EmbeddedPython {
     static let shared = EmbeddedPython()
 
@@ -23,8 +28,8 @@ final class EmbeddedPython {
         #endif
     }
 
-    /// Starts CPython with `PYTHONHOME` pointing at the bundled stdlib.
-    func start(pluginDirectory: String, dataDirectory: String, bridgeRegistered: Bool) -> Bool {
+    /// Starts CPython with `PYTHONHOME` pointing at the extracted stdlib.
+    func start(pluginDirectory: String, dataDirectory: String) -> Bool {
         #if canImport(Python)
         if self.isStarted {
             return true
@@ -32,25 +37,30 @@ final class EmbeddedPython {
         guard let resources = Bundle.main.resourcePath else {
             return false
         }
-        // Bundle layout: Resources/python/lib/python3.11 (see build-system/setup_python.py).
-        let home = resources + "/python"
-        setenv("PYTHONHOME", home, 1)
-        setenv("PYTHONDONTWRITEBYTECODE", "1", 1)
-        if bridgeRegistered {
-            PyImport_AppendInittab("trollgram_bridge", bridgeModuleInit)
+        guard let home = self.prepareStdlib(resources: resources) else {
+            NSLog("[TrollGram] Python stdlib is unavailable")
+            return false
         }
+        let stdlib = home + "/lib/python3.11"
+        setenv("PYTHONHOME", home, 1)
+        setenv("PYTHONPATH", stdlib + ":" + pluginDirectory + ":" + dataDirectory, 1)
+        setenv("TROLLGRAM_DATA_DIR", dataDirectory, 1)
+        setenv("PYTHONDONTWRITEBYTECODE", "1", 1)
 
         Py_Initialize()
 
         let paths = [
             pluginDirectory,
-            home + "/lib/python3.11",
-            home + "/lib/python3.11/lib-dynload",
-            resources + "/python_stdlib",
+            stdlib,
+            stdlib + "/lib-dynload",
             dataDirectory
         ]
         for path in paths {
             self.run("import sys, os\np = os.path.realpath(r'''\(path)''')\nif p not in sys.path:\n    sys.path.insert(0, p)")
+        }
+        if let error = self.run("import encodings, os, sys") {
+            NSLog("[TrollGram] Python bootstrap failed: \(error)")
+            return false
         }
         self.isStarted = true
         return true
@@ -59,7 +69,34 @@ final class EmbeddedPython {
         #endif
     }
 
-    /// Executes a Python snippet. Returns the traceback on failure.
+    /// Extracts `python.zip` from the app bundle once and returns the root that
+    /// `PYTHONHOME` expects (`lib/python3.11` lives directly inside it).
+    private func prepareStdlib(resources: String) -> String? {
+        let fileManager = FileManager.default
+        let support = (NSSearchPathForDirectoriesInDomains(.applicationSupportDirectory, .userDomainMask, true).first ?? NSTemporaryDirectory()) + "/TrollGram"
+        let home = support + "/python"
+        if fileManager.fileExists(atPath: home + "/lib/python3.11/os.py") {
+            return home
+        }
+        guard let archive = Bundle.main.path(forResource: "python", ofType: "zip") else {
+            NSLog("[TrollGram] python.zip is not bundled (looked in \(resources))")
+            return nil
+        }
+        do {
+            try fileManager.createDirectory(atPath: support, withIntermediateDirectories: true)
+            try? fileManager.removeItem(atPath: home)
+            guard SSZipArchive.unzipFileAtPath(archive, toDestination: home) else {
+                NSLog("[TrollGram] Failed to extract python.zip")
+                return nil
+            }
+        } catch {
+            NSLog("[TrollGram] Failed to prepare python stdlib: \(error)")
+            return nil
+        }
+        return fileManager.fileExists(atPath: home + "/lib/python3.11/os.py") ? home : nil
+    }
+
+    /// Executes a Python snippet. Returns the error description on failure.
     @discardableResult
     func run(_ code: String) -> String? {
         #if canImport(Python)
@@ -86,7 +123,6 @@ final class EmbeddedPython {
         let code = """
         import importlib
         import sys
-        import builtins
         _tg_name = '\(escapedModule)'
         if _tg_name in sys.modules:
             importlib.reload(sys.modules[_tg_name])

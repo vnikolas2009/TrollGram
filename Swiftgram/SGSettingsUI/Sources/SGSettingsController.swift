@@ -49,7 +49,18 @@ private enum SGControllerSection: Int32, SGItemListSection {
 }
 
 private enum SGBoolSetting: String {
-    case trollPrivacy
+    // TrollGram privacy toggles. The raw value doubles as the storage key in
+    // the `app.trollgram.ios.privacy` suite read by `TrollPrivacyOptions`.
+    case trollPrivacyAntiDelete = "tg_privacy_anti_delete"
+    case trollPrivacyEditHistory = "tg_privacy_edit_history"
+    case trollPrivacyGhostMode = "tg_privacy_ghost_mode"
+    case trollPrivacyGhostHideOnline = "tg_privacy_ghost_hide_online"
+    case trollPrivacyGhostHideRead = "tg_privacy_ghost_hide_read"
+    case trollPrivacyGhostHideTyping = "tg_privacy_ghost_hide_typing"
+    case trollPrivacyGhostHideUpload = "tg_privacy_ghost_hide_upload"
+    case trollPrivacyViewOnce = "tg_privacy_view_once"
+    case trollPrivacyAllowCopy = "tg_privacy_allow_copy"
+    case trollPrivacyRemoveSponsored = "tg_privacy_remove_sponsored"
     case hidePhoneInSettings
     case showTabNames
     case showContactsTab
@@ -163,7 +174,10 @@ private func SGControllerEntries(presentationData: PresentationData, callListSet
     entries.append(.header(id: id.count, section: .privacy, text: "PRIVACY", badge: newStr))
     entries.append(.disclosure(id: id.count, section: .privacy, link: .trollPlugins, text: "Plugins"))
     for row in TrollPrivacyOptions.rows {
-        entries.append(.toggle(id: id.count, section: .privacy, settingName: .trollPrivacy, value: TrollPrivacyOptions.flag(row.key), text: row.title, enabled: true))
+        guard let setting = SGBoolSetting(rawValue: row.key) else {
+            continue
+        }
+        entries.append(.toggle(id: id.count, section: .privacy, settingName: setting, value: TrollPrivacyOptions.flag(row.key), text: row.title, enabled: true))
     }    
     if SGSimpleSettings.shared.canUseNY {
         entries.append(.header(id: id.count, section: .trending, text: i18n("Settings.NY.Header", lang), badge: newStr))
@@ -516,11 +530,12 @@ public func sgSettingsController(context: AccountContext/*, focusOnItemTag: Int?
             SGSimpleSettings.shared.forceEmojiTab = value
         case .forceBuiltInMic:
             SGSimpleSettings.shared.forceBuiltInMic = value
-        case .trollPrivacy:
-            if let key = TrollPrivacyOptions.pendingKey {
-                TrollPrivacyOptions.setFlag(key, value)
-                TrollPrivacyBootstrap.mirror()
-            }
+        case .trollPrivacyAntiDelete, .trollPrivacyEditHistory, .trollPrivacyGhostMode,
+             .trollPrivacyGhostHideOnline, .trollPrivacyGhostHideRead, .trollPrivacyGhostHideTyping,
+             .trollPrivacyGhostHideUpload, .trollPrivacyViewOnce, .trollPrivacyAllowCopy,
+             .trollPrivacyRemoveSponsored:
+            TrollPrivacyOptions.setFlag(setting.rawValue, value)
+            TrollPrivacyBootstrap.mirror()
         case .hideChannelBottomButton:
             SGSimpleSettings.shared.hideChannelBottomButton = !value
         case .secondsInMessages:

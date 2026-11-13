@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: ipa-${{ github.ref }}
@@ -29,12 +30,13 @@ concurrency:
 env:
   SOURCE_DIR: /Users/Shared/trollgram-ios
   BAZEL_USER_ROOT: /private/var/tmp/_bazel_trollgram
+  BUILD_LOG: /Users/Shared/trollgram-build.log
 
 jobs:
   build:
     name: Build TrollGram.ipa
     runs-on: macos-latest
-    timeout-minutes: 300
+    timeout-minutes: 360
 
     steps:
       - name: Checkout
@@ -68,7 +70,7 @@ jobs:
         run: |
           set -x
           python3 build-system/setup_python.py
-          du -sh third-party/python/Python.xcframework build/python-ios
+          du -sh third-party/python/Python.xcframework third-party/python/resources
 
       - name: Create canonical source directory
         run: |
@@ -77,6 +79,8 @@ jobs:
           sudo rm -rf "$SOURCE_DIR"
           sudo cp -R "$GITHUB_WORKSPACE" "$SOURCE_DIR"
           sudo chown -R "$(id -u):$(id -g)" "$SOURCE_DIR"
+          touch "$BUILD_LOG"
+          sudo chown "$(id -u):$(id -g)" "$BUILD_LOG"
 
       - name: Cache Bazel
         uses: actions/cache@v4
@@ -103,6 +107,7 @@ jobs:
 
       - name: Build app (unsigned)
         run: |
+          set -o pipefail
           set -x
           cd "$SOURCE_DIR"
           mkdir -p /Users/Shared/telegram-bazel-cache
@@ -114,16 +119,17 @@ jobs:
             --buildNumber="$BUILD_NUMBER" \
             --overrideXcodeVersion="$XCODE_VERSION" \
             --disableProvisioningProfiles \
-            --bazelProfile="/Users/Shared/telegram-bazel-cache/profile.json"
+            --bazelProfile="/Users/Shared/telegram-bazel-cache/profile.json" \
+            2>&1 | tee -a "$BUILD_LOG"
 
       - name: Package unsigned IPA
         run: |
           set -x
           cd "$SOURCE_DIR"
-          APP_DIR=$(find bazel-out -maxdepth 7 -type d \( -name "TrollGram.app" -o -name "Telegram.app" \) | grep -E "applebin_ios-ios_arm" | head -1)
+          APP_DIR=$(find bazel-out -maxdepth 8 -type d \( -name "TrollGram.app" -o -name "Telegram.app" \) | grep -E "applebin_ios-ios_arm" | head -1)
           if [ -z "$APP_DIR" ]; then
             echo "Built .app bundle not found" >&2
-            find bazel-out -maxdepth 7 -type d -name "*.app" | head -20
+            find bazel-out -maxdepth 8 -type d -name "*.app" | head -20
             exit 1
           fi
           echo "Using $APP_DIR"
@@ -131,6 +137,22 @@ jobs:
           mkdir -p "$RUNNER_TEMP/Payload"
           cp -R "$APP_DIR" "$RUNNER_TEMP/Payload/TrollGram.app"
           rm -f "$RUNNER_TEMP/Payload/TrollGram.app/embedded.mobileprovision"
+
+          # Python.framework is a dylib, so it has to live in Frameworks/.
+          # rules_apple may already embed it; only copy when it is missing.
+          PY_FRAMEWORK="$SOURCE_DIR/third-party/python/Python.xcframework/ios-arm64/Python.framework"
+          if [ -d "$PY_FRAMEWORK" ] && [ ! -d "$RUNNER_TEMP/Payload/TrollGram.app/Frameworks/Python.framework" ]; then
+            mkdir -p "$RUNNER_TEMP/Payload/TrollGram.app/Frameworks"
+            cp -R "$PY_FRAMEWORK" "$RUNNER_TEMP/Payload/TrollGram.app/Frameworks/"
+          fi
+
+          # Verify the plugin stdlib actually made it into the bundle.
+          if [ -f "$RUNNER_TEMP/Payload/TrollGram.app/python.zip" ]; then
+            echo "python.zip bundled: $(du -h "$RUNNER_TEMP/Payload/TrollGram.app/python.zip" | cut -f1)"
+          else
+            echo "warning: python.zip is missing from the app bundle" >&2
+          fi
+
           cd "$RUNNER_TEMP"
           zip -qry TrollGram.ipa Payload
           echo "IPA_SIZE=$(du -h TrollGram.ipa | cut -f1)" >> "$GITHUB_ENV"
@@ -176,4 +198,52 @@ jobs:
               --title "$TITLE" \
               --notes "$NOTES" \
               --target "$GITHUB_SHA"
+          fi
+
+      # Compiler errors are mirrored as check-run annotations, which stay
+      # readable even when the raw job log download is blocked.
+      - name: Surface build errors as annotations
+        if: failure()
+        run: |
+          if [ ! -f "$BUILD_LOG" ]; then
+            echo "no build log at $BUILD_LOG"
+            exit 0
+          fi
+          grep -a -E "error:|error \[|ERROR:|fatal error|FAILED:" "$BUILD_LOG" \
+            | head -40 \
+            | while IFS= read -r line; do
+                echo "::error::$(printf '%s' "$line" | cut -c1-900)"
+              done
+          echo "annotations emitted"
+
+      # Artifact/log downloads are blocked on some networks, so the compiler
+      # output is mirrored into an issue where the API can read it.
+      - name: Publish build log on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -f "$BUILD_LOG" ]; then
+            echo "no build log at $BUILD_LOG"
+            exit 0
+          fi
+          {
+            echo "Build for \`$GITHUB_SHA\` (run \`$GITHUB_RUN_ID\`) failed."
+            echo
+            echo "### Errors"
+            echo '```'
+            grep -a -E "error:|ERROR:|error \[|FAILED:|fatal error" "$BUILD_LOG" | head -200 || true
+            echo '```'
+            echo
+            echo "### Last 250 lines"
+            echo '```'
+            tail -n 250 "$BUILD_LOG"
+            echo '```'
+          } > /tmp/report.md
+          head -c 60000 /tmp/report.md > /tmp/report-trimmed.md
+          ISSUE=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "CI build log in:title" --json number --jq '.[0].number // empty' || true)
+          if [ -z "$ISSUE" ]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "CI build log" --body-file /tmp/report-trimmed.md || true
+          else
+            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report-trimmed.md || true
           fi

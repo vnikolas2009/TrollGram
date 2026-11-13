@@ -181,7 +181,7 @@ private func requestActivity(postbox: Postbox, network: Network, accountPeerId: 
                     return .complete()
                 }
                 switch activity {
-                case .uploadingFile, .uploadingPhoto, .uploadingVideo, .uploadingInstantVideo, .recordingInstantVideo:
+                case .uploadingFile(progress: _), .uploadingPhoto(progress: _), .uploadingVideo(progress: _), .uploadingInstantVideo(progress: _), .recordingInstantVideo:
                     if TrollPrivacyRuntime.suppressUploading {
                         return .complete()
                     }
