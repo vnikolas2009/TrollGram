@@ -131,7 +131,6 @@ jobs:
           python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
 
           EXTRA_ARGS=(
-            --cacheDir="$BUILD_CACHE_DIR"
             --skipDsym
             --enableParallelSwiftmoduleGeneration
             --bazelProfile="$RUNNER_TEMP/bazel-profile.json"
@@ -141,6 +140,7 @@ jobs:
           fi
 
           python3 -u build-system/Make/Make.py \
+            --cacheDir="$BUILD_CACHE_DIR" \
             --bazelUserRoot="$BAZEL_USER_ROOT" \
             --overrideXcodeVersion \
             build \
