@@ -121,12 +121,7 @@ public func trollPluginsController(context: AccountContext) -> ViewController {
             PythonPluginManager.shared.clearLogs()
         },
         importPlugins: {
-            guard let navigationController = context.sharedContext.mainWindow?.viewController as? UINavigationController else {
-                return
-            }
-            installer.present(from: context, presenter: { picker in
-                navigationController.present(picker, animated: true)
-            })
+            installer.present(from: context)
         }
     )
 

@@ -1,18 +1,18 @@
 import Foundation
 import UIKit
-import TelegramPresentationData
+import Display
 import UniformTypeIdentifiers
 import AccountContext
 import PythonPlugins
 
 public final class PythonPluginsInstaller {
-    private weak var presentedController: UIViewController?
+    private var delegate: PickerDelegate?
 
     public init() {}
 
     /// Presents a Files picker filtered to `.py` and installs the selection.
-    public func present(from context: AccountContext, presenter: @escaping (UIViewController) -> Void) {
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.pythonScript], asCopy: true)
+    public func present(from context: AccountContext) {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.trollPythonScript], asCopy: true)
         picker.allowsMultipleSelection = true
         picker.shouldShowFileExtensions = true
 
@@ -20,34 +20,30 @@ public final class PythonPluginsInstaller {
             for url in urls {
                 _ = PythonPluginManager.shared.installPlugin(at: url.path)
             }
-        }, onController: { [weak self] controller in
-            self?.presentedController = controller
         })
         picker.delegate = delegate
         self.delegate = delegate
-        presenter(picker)
-    }
 
-    private var delegate: PickerDelegate?
+        context.sharedContext.mainWindow?.presentNative(picker)
+    }
 }
 
 extension UTType {
-    public static var pythonScript: UTType {
+    /// `public.python-script` is not exposed by every SDK version, so the type
+    /// is derived from the file extension instead of hardcoding an identifier.
+    public static var trollPythonScript: UTType {
         return UTType(filenameExtension: "py") ?? .plainText
     }
 }
 
 private final class PickerDelegate: NSObject, UIDocumentPickerDelegate {
     private let onPick: ([URL]) -> Void
-    private let onController: (UIViewController) -> Void
 
-    init(onPick: @escaping ([URL]) -> Void, onController: @escaping (UIViewController) -> Void) {
+    init(onPick: @escaping ([URL]) -> Void) {
         self.onPick = onPick
-        self.onController = onController
     }
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-        self.onController(controller)
         self.onPick(urls)
     }
 }
