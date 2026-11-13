@@ -1,0 +1,160 @@
+
+<div align="center">
+
+# TrollGram
+
+**Неофициальный клиент Telegram для iOS**
+
+Основан на Telegram iOS и Swiftgram.
+Дополнительные функции приватности и экспериментальная поддержка Python-плагинов.
+
+</div>
+
+---
+
+## О проекте
+
+TrollGram — неофициальный клиент Telegram для iOS, основанный
+на исходном коде Telegram iOS.
+
+Проект объединяет отдельные возможности Swiftgram, дополнительные
+настройки приватности и экспериментальную систему Python-плагинов.
+
+Основная цель — предоставить пользователям дополнительные
+возможности и сохранить открытость проекта для изменений
+и предложений сообщества.
+
+## Возможности
+
+### Настройки приватности
+
+В TrollGram доступны следующие функции:
+
+- Anti-Delete — работа с удалёнными сообщениями.
+- Edit History — просмотр истории редактирования.
+- Ghost Mode — режим невидимости.
+- Hide Online Status — скрытие статуса «в сети».
+- Hide Read Receipts — скрытие отметок о прочтении.
+- Hide Typing Status — скрытие статуса набора текста.
+- Hide Uploading Status — скрытие статуса загрузки.
+- View Once Media — работа с медиа для однократного просмотра.
+- Copy Protected Media — дополнительные возможности работы с защищёнными медиа.
+- Remove Sponsored Messages — удаление рекламных сообщений.
+
+Функции работают на стороне клиента и не гарантируют полной
+анонимности или защиты от серверов Telegram.
+
+### Python-плагины
+
+В приложении реализована экспериментальная поддержка Python 3.11.
+
+Доступные возможности:
+
+- Импорт файлов `.py`.
+- Включение и отключение отдельных плагинов.
+- Просмотр журналов работы.
+- Отдельное хранение данных плагинов.
+
+Стандартные директории:
+
+| Назначение | Путь |
+| --- | --- |
+| Плагины | `Documents/Plugins` |
+| Данные плагинов | `Documents/PluginsData` |
+
+Устанавливайте плагины только из проверенных источников.
+Python-код выполняется внутри среды приложения и может получать
+доступ к доступным ему данным.
+
+### Совместимость
+
+В проект включены отдельные функции и компоненты совместимости
+из exteraGram.
+
+Не все возможности других Telegram-клиентов доступны в TrollGram.
+
+## Установка
+
+Рекомендуемый способ установки — IPA-файлы из раздела
+[GitHub Releases](../../releases).
+
+Способ установки зависит от метода подписи и версии iOS.
+
+## Сборка проекта
+
+### Требования
+
+- macOS
+- Xcode
+- Python 3
+- Git
+- Инициализированные Git submodules
+
+### Клонирование
+
+```bash
+git clone --recursive https://github.com/vnikolas2009/TrollGram.git
+cd TrollGram
+git submodule update --init --recursive
+```
+
+### Подготовка окружения
+
+```bash
+python3 build-system/setup_python.py
+```
+
+### Сборка
+
+```bash
+python3 build-system/Make/Make.py \
+  --cacheDir="$HOME/bazel-cache" \
+  --bazelUserRoot="$HOME/bazel-trollgram" \
+  build \
+  --configurationPath=build-system/appstore-configuration.json \
+  --codesigningInformationPath=build-system/fake-codesigning \
+  --configuration=release_arm64 \
+  --buildNumber=1000 \
+  --skipDsym \
+  --overrideXcodeVersion
+```
+
+В зависимости от окружения параметры сборки могут потребовать изменений.
+
+## Структура проекта
+
+| Путь | Назначение |
+| --- | --- |
+| `Swiftgram/SGTrollPrivacy` | Интерфейс и функции приватности |
+| `SGTrollPrivacyCore` | Реализация функций приватности |
+| `PythonPlugins` | Поддержка Python-плагинов |
+| `SGTrollPluginsUI` | Интерфейс управления плагинами |
+| `SGSettingsUI` | Настройки приложения |
+| `submodules/TelegramCore` | Компоненты Telegram Core |
+
+## Благодарности
+
+TrollGram использует наработки следующих открытых проектов:
+
+- [Telegram iOS](https://github.com/TelegramMessenger/Telegram-iOS)
+- [Swiftgram](https://github.com/Swiftgram/Telegram-iOS)
+- [exteraGram](https://github.com/exteraSquad/exteraGram)
+
+Благодарность разработчикам и участникам этих проектов.
+
+## Отказ от ответственности
+
+TrollGram — неофициальный сторонний проект.
+
+Он не связан с Telegram, не одобрен и не поддерживается
+Telegram или перечисленными выше проектами.
+
+Telegram является товарным знаком его правообладателя.
+
+## Лицензия
+
+TrollGram распространяется на условиях GNU General Public License
+версии 2 или, по желанию, любой более поздней версии.
+
+Отдельные сторонние компоненты могут иметь другие лицензии.
+Подробности указаны в соответствующих файлах лицензий.
