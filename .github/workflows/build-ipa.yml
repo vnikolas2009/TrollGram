@@ -162,10 +162,24 @@ jobs:
         run: |
           set -x
           cd "$SOURCE_DIR"
-          APP_DIR=$(find bazel-out -maxdepth 8 -type d \( -name "TrollGram.app" -o -name "Telegram.app" \) | grep -E "applebin_ios-ios_arm" | head -1)
+          # Take the bundle from the .ipa that bazel just wrote (bazel-bin follows the last build's
+          # configuration); the //Telegram:Swiftgram app target builds Swiftgram.ipa / Swiftgram.app.
+          IPA_SRC=""
+          for c in bazel-bin/Telegram/Swiftgram.ipa bazel-bin/Telegram/TrollGram.ipa bazel-bin/Telegram/Telegram.ipa; do
+            if [ -f "$c" ]; then IPA_SRC="$c"; break; fi
+          done
+          if [ -z "$IPA_SRC" ]; then
+            echo "Built .ipa not found in bazel-bin/Telegram" >&2
+            ls -la bazel-bin/Telegram/*.ipa 2>&1 | head -20 >&2 || true
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/ipa-extract"
+          mkdir -p "$RUNNER_TEMP/ipa-extract"
+          unzip -q -o "$IPA_SRC" -d "$RUNNER_TEMP/ipa-extract"
+          APP_DIR=$(find "$RUNNER_TEMP/ipa-extract/Payload" -maxdepth 1 -type d -name "*.app" | head -1)
           if [ -z "$APP_DIR" ]; then
-            echo "Built .app bundle not found" >&2
-            find bazel-out -maxdepth 8 -type d -name "*.app" | head -20
+            echo "No .app inside $IPA_SRC" >&2
+            ls -la "$RUNNER_TEMP/ipa-extract/Payload" >&2 || true
             exit 1
           fi
           echo "Using $APP_DIR"
