@@ -113,12 +113,12 @@ jobs:
           mkdir -p /Users/Shared/telegram-bazel-cache
           python3 -u build-system/Make/Make.py \
             --bazelUserRoot="$BAZEL_USER_ROOT" \
+            --overrideXcodeVersion \
             build \
             --configurationPath="build-system/appstore-configuration.json" \
             --xcodeManagedCodesigning \
             --configuration="$CONFIGURATION" \
             --buildNumber="$BUILD_NUMBER" \
-            --overrideXcodeVersion \
             --disableProvisioningProfiles \
             --continueOnError \
             --bazelProfile="/Users/Shared/telegram-bazel-cache/profile.json" \
