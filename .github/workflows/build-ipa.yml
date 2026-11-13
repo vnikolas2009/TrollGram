@@ -33,7 +33,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  SOURCE_DIR: /Users/Shared/trollgram-ios
+  # Build straight from the checkout: an extra copy of the tree cost several
+  # minutes per run and cache keys stay stable because the path is constant.
+  SOURCE_DIR: ${{ github.workspace }}
   BAZEL_USER_ROOT: /private/var/tmp/_bazel_trollgram
   BUILD_CACHE_DIR: /Users/Shared/trollgram-bazel-cache
   BUILD_LOG: /Users/Shared/trollgram-build.log
@@ -50,6 +52,7 @@ jobs:
 
     steps:
       - name: Checkout
+        timeout-minutes: 20
         uses: actions/checkout@v4
         with:
           submodules: "recursive"
@@ -59,16 +62,19 @@ jobs:
           fetch-depth: "1"
 
       - name: Free disk space
+        timeout-minutes: 20
         run: |
           set -x
           sudo rm -rf /Users/runner/Library/Developer/Xcode/DerivedData/* || true
           sudo rm -rf /Users/runner/Library/Caches/org.swift.swiftpm || true
           sudo rm -rf /Applications/Xcode*.app/Contents/Developer/Platforms/AppleTV* || true
-          sudo rm -rf /Applications/Xcode*.app/Contents/Developer/Platforms/Watch* || true
+          # The watchOS platform is kept: the build produces a watch app, and
+          # removing the SDK makes the build fail early.
           sudo rm -rf /Applications/Xcode*.app/Contents/Developer/Platforms/DriverKit* || true
           df -h /
 
       - name: Select Xcode
+        timeout-minutes: 10
         run: |
           set -x
           XCODE_VERSION=$(python3 -c 'import json;print(json.load(open("versions.json"))["xcode"])')
@@ -80,20 +86,17 @@ jobs:
           xcodebuild -version
 
       - name: Fetch Python runtime
+        timeout-minutes: 15
         run: |
           set -x
           python3 build-system/setup_python.py
           du -sh third-party/python/Python.xcframework third-party/python/resources
 
-      - name: Create canonical source directory
+      - name: Prepare build log
+        timeout-minutes: 5
         run: |
           set -x
-          sudo mkdir -p /Users/Shared
-          sudo rm -rf "$SOURCE_DIR"
-          sudo cp -R "$GITHUB_WORKSPACE" "$SOURCE_DIR"
-          sudo chown -R "$(id -u):$(id -g)" "$SOURCE_DIR"
           touch "$BUILD_LOG"
-          sudo chown "$(id -u):$(id -g)" "$BUILD_LOG"
 
       # Only the action/repository cache is persisted: it is what makes a
       # re-run cheap. The Bazel output base is several extra GB and would push
@@ -103,6 +106,7 @@ jobs:
       # cache for the next attempt (actions/cache only saves on success).
       - name: Restore Bazel cache
         id: bazel-cache
+        timeout-minutes: 30
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.BUILD_CACHE_DIR }}
@@ -111,6 +115,7 @@ jobs:
             bazel-v2-${{ runner.os }}-
 
       - name: Compute version
+        timeout-minutes: 10
         run: |
           set -x
           cd "$SOURCE_DIR"
@@ -123,6 +128,7 @@ jobs:
           echo "CONFIGURATION=${{ github.event.inputs.configuration || 'release_arm64' }}" >> "$GITHUB_ENV"
 
       - name: Build app (unsigned)
+        timeout-minutes: 300
         run: |
           set -o pipefail
           set -x
@@ -152,6 +158,7 @@ jobs:
             2>&1 | tee -a "$BUILD_LOG"
 
       - name: Package unsigned IPA
+        timeout-minutes: 20
         run: |
           set -x
           cd "$SOURCE_DIR"
@@ -194,6 +201,7 @@ jobs:
         id: sign
         if: env.P12_BASE64 != '' && env.PROFILE_BASE64 != ''
         continue-on-error: true
+        timeout-minutes: 20
         run: |
           set -o pipefail
           set -x
@@ -210,6 +218,7 @@ jobs:
 
       - name: Report signing failure
         if: steps.sign.outcome == 'failure'
+        timeout-minutes: 5
         run: |
           if [ -f "$RUNNER_TEMP/sign.log" ]; then
             tail -n 40 "$RUNNER_TEMP/sign.log" | while IFS= read -r line; do
@@ -221,6 +230,7 @@ jobs:
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
+        timeout-minutes: 20
         with:
           name: TrollGram-${{ env.APP_VERSION }}-${{ env.BUILD_NUMBER }}
           path: ${{ runner.temp }}/TrollGram*.ipa
@@ -229,6 +239,7 @@ jobs:
 
       - name: Determine release tag
         id: release_meta
+        timeout-minutes: 5
         run: |
           set -x
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
@@ -241,6 +252,7 @@ jobs:
 
       - name: Create / update GitHub Release
         if: steps.release_meta.outputs.publish == 'true'
+        timeout-minutes: 15
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -274,6 +286,7 @@ jobs:
       # readable even when the raw job log download is blocked.
       - name: Surface build errors as annotations
         if: failure()
+        timeout-minutes: 10
         run: |
           if [ ! -f "$BUILD_LOG" ]; then
             echo "::error::no build log at $BUILD_LOG"
@@ -294,6 +307,7 @@ jobs:
       # output is mirrored into an issue where the API can read it.
       - name: Publish build log on failure
         if: failure()
+        timeout-minutes: 10
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -329,6 +343,7 @@ jobs:
       - name: Measure Bazel cache
         id: cache_size
         if: always()
+        timeout-minutes: 10
         run: |
           SIZE_KB=$(du -sk "$BUILD_CACHE_DIR" 2>/dev/null | cut -f1)
           SIZE_KB=${SIZE_KB:-0}
@@ -342,6 +357,7 @@ jobs:
 
       - name: Save Bazel cache
         if: always() && steps.cache_size.outputs.ok == 'true' && steps.bazel-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 30
         uses: actions/cache/save@v4
         with:
           path: ${{ env.BUILD_CACHE_DIR }}
