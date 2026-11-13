@@ -115,6 +115,7 @@ jobs:
             --bazelUserRoot="$BAZEL_USER_ROOT" \
             build \
             --configurationPath="build-system/appstore-configuration.json" \
+            --xcodeManagedCodesigning \
             --configuration="$CONFIGURATION" \
             --buildNumber="$BUILD_NUMBER" \
             --overrideXcodeVersion="$XCODE_VERSION" \
