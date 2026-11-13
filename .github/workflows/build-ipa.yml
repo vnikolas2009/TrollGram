@@ -53,7 +53,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: "recursive"
-          fetch-depth: "0"
+          # Shallow clones: the build number comes from the run number, and
+          # full history of the main repo plus all submodules is the slowest
+          # part of the setup.
+          fetch-depth: "1"
 
       - name: Free disk space
         run: |
@@ -95,11 +98,15 @@ jobs:
       # Only the action/repository cache is persisted: it is what makes a
       # re-run cheap. The Bazel output base is several extra GB and would push
       # the entry over the 10 GB per-repository cache limit.
+      #
+      # restore/save are separate steps so that a failed build still warms the
+      # cache for the next attempt (actions/cache only saves on success).
       - name: Restore Bazel cache
-        uses: actions/cache@v4
+        id: bazel-cache
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.BUILD_CACHE_DIR }}
-          key: bazel-v2-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'versions.json') }}
+          key: bazel-v2-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'versions.json') }}-${{ github.run_id }}
           restore-keys: |
             bazel-v2-${{ runner.os }}-
 
@@ -108,11 +115,10 @@ jobs:
           set -x
           cd "$SOURCE_DIR"
           OFFSET="$(cat build_number_offset)"
-          COMMIT_COUNT=$(git rev-list --count HEAD)
           APP_VERSION=$(python3 -c 'import json;print(json.load(open("versions.json"))["app"])')
           XCODE_VERSION=$(python3 -c 'import json;print(json.load(open("versions.json"))["xcode"])')
           echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
-          echo "BUILD_NUMBER=$((COMMIT_COUNT + OFFSET))" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=$((GITHUB_RUN_NUMBER + OFFSET))" >> "$GITHUB_ENV"
           echo "XCODE_VERSION=$XCODE_VERSION" >> "$GITHUB_ENV"
           echo "CONFIGURATION=${{ github.event.inputs.configuration || 'release_arm64' }}" >> "$GITHUB_ENV"
 
@@ -311,3 +317,26 @@ jobs:
           else
             gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report-trimmed.md || true
           fi
+
+      # Persist the action/repository cache even when the build fails, so the
+      # next attempt starts warm instead of recompiling everything.
+      - name: Measure Bazel cache
+        id: cache_size
+        if: always()
+        run: |
+          SIZE_KB=$(du -sk "$BUILD_CACHE_DIR" 2>/dev/null | cut -f1)
+          SIZE_KB=${SIZE_KB:-0}
+          echo "Bazel cache: $((SIZE_KB / 1024)) MB"
+          if [ "$SIZE_KB" -gt 8388608 ]; then
+            echo "::warning::Bazel cache is larger than 8 GB - not uploaded to stay under the repository cache limit"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Save Bazel cache
+        if: always() && steps.cache_size.outputs.ok == 'true' && steps.bazel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.BUILD_CACHE_DIR }}
+          key: ${{ steps.bazel-cache.outputs.cache-primary-key }}
