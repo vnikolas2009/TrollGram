@@ -180,13 +180,13 @@ private func requestActivity(postbox: Postbox, network: Network, accountPeerId: 
                 if TrollPrivacyRuntime.suppressTyping {
                     return .complete()
                 }
-                switch activity {
-                case .uploadingFile(progress: _), .uploadingPhoto(progress: _), .uploadingVideo(progress: _), .uploadingInstantVideo(progress: _), .recordingInstantVideo:
-                    if TrollPrivacyRuntime.suppressUploading {
+                if let activity = activity, TrollPrivacyRuntime.suppressUploading {
+                    switch activity {
+                    case .uploadingFile, .uploadingPhoto, .uploadingVideo, .uploadingInstantVideo, .recordingInstantVideo:
                         return .complete()
+                    default:
+                        break
                     }
-                default:
-                    break
                 }
                 var flags: Int32 = 0
                 let topMessageId = threadId.flatMap { Int32(clamping: $0) }
