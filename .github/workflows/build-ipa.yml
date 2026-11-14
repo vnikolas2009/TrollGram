@@ -134,13 +134,18 @@ jobs:
           set -x
           cd "$SOURCE_DIR"
           mkdir -p "$BUILD_CACHE_DIR"
-          python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
 
-          # --disableProvisioningProfiles: the fake profiles in build-system/fake-codesigning belong to the
-          # old bundle id, so with bundle_id = com.TrollCerts.Gram none of them would match. The IPA is
-          # signed afterwards with the real profile (sign_ipa.py), so no profile is needed here.
+          # rules_apple refuses to build a device configuration without provisioning profiles, and Make.py
+          # only picks up a profile whose app id starts with <team_id>.<bundle_id> from
+          # appstore-configuration.json. The bundled fake profiles are for ph.telegra.Telegraph, so
+          # retarget them to the configured bundle id. The IPA is re-signed later (sign_ipa.py).
+          BUNDLE_ID="$(python3 -c 'import json;print(json.load(open("build-system/appstore-configuration.json"))["bundle_id"])')"
+          FAKE_CODESIGNING="$RUNNER_TEMP/fake-codesigning"
+          rm -rf "$FAKE_CODESIGNING"
+          python3 build-system/fix_fake_profiles.py --bundle-id "$BUNDLE_ID" --out "$FAKE_CODESIGNING"
+          python3 build-system/Make/ImportCertificates.py --path "$FAKE_CODESIGNING/certs"
+
           EXTRA_ARGS=(
-            --disableProvisioningProfiles
             --skipDsym
             --enableParallelSwiftmoduleGeneration
             --bazelProfile="$RUNNER_TEMP/bazel-profile.json"
@@ -155,7 +160,7 @@ jobs:
             --overrideXcodeVersion \
             build \
             --configurationPath="build-system/appstore-configuration.json" \
-            --codesigningInformationPath=build-system/fake-codesigning \
+            --codesigningInformationPath="$FAKE_CODESIGNING" \
             --configuration="$CONFIGURATION" \
             --buildNumber="$BUILD_NUMBER" \
             "${EXTRA_ARGS[@]}" \

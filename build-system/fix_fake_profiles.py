@@ -11,8 +11,18 @@ CMS envelope, so editing the payload invalidates the message digest and
 "digest failure". This script re-creates the CMS signature with the bundled
 fake certificate instead.
 
+With ``--bundle-id`` the profiles are also retargeted to another bundle id
+(application identifiers, app groups and names) and written, together with the
+fake certificate, to a new ``--out`` directory laid out like
+``build-system/fake-codesigning``. Make.py only picks up a profile whose
+application identifier starts with ``<team id>.<bundle id>`` from
+appstore-configuration.json, and rules_apple refuses to build a device
+configuration without a profile, so the fake profiles must follow the
+configured bundle id.
+
 Usage:
     python3 build-system/fix_fake_profiles.py [--year 2036] [--check]
+    python3 build-system/fix_fake_profiles.py --bundle-id com.example.App --out DIR
 
 Requires ``openssl`` on PATH.
 """
@@ -20,6 +30,8 @@ Requires ``openssl`` on PATH.
 import argparse
 import glob
 import os
+import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -127,6 +139,18 @@ def bump_date(payload, year):
     )
 
 
+def detect_source_bundle_id(profiles_directory):
+    """The bundle id the bundled profiles were made for (from Telegram.mobileprovision)."""
+    payload = profile_payload(os.path.join(profiles_directory, "Telegram.mobileprovision"))
+    application_identifier = plistlib.loads(payload)["Entitlements"]["application-identifier"]
+    return application_identifier.split(".", 1)[1]
+
+
+def retarget_bundle_id(payload, source_bundle_id, target_bundle_id):
+    """Replaces the bundle id everywhere in the profile plist (names, app ids, app groups)."""
+    return payload.replace(source_bundle_id.encode("ascii"), target_bundle_id.encode("ascii"))
+
+
 def verify(path):
     result = subprocess.run(
         [OPENSSL, "smime", "-inform", "der", "-verify", "-noverify", "-in", path],
@@ -143,7 +167,28 @@ def main():
         action="store_true",
         help="only verify that the profiles are still readable/valid",
     )
+    parser.add_argument(
+        "--bundle-id",
+        help="retarget the profiles to this bundle id (requires --out)",
+    )
+    parser.add_argument(
+        "--from-bundle-id",
+        help="bundle id the bundled profiles were made for (default: detected)",
+    )
+    parser.add_argument(
+        "--out",
+        help="write retargeted profiles/ and certs/ here instead of changing the bundled ones",
+    )
     arguments = parser.parse_args()
+
+    target_bundle_id = arguments.bundle_id
+    if target_bundle_id is not None:
+        if not arguments.out:
+            parser.error("--bundle-id requires --out")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", target_bundle_id):
+            parser.error("invalid bundle id %r" % target_bundle_id)
+    elif arguments.out:
+        parser.error("--out requires --bundle-id")
 
     if arguments.check:
         failed = False
@@ -155,6 +200,15 @@ def main():
                 failed = True
         raise SystemExit(1 if failed else 0)
 
+    output_profiles = PROFILES
+    source_bundle_id = None
+    if target_bundle_id is not None:
+        source_bundle_id = arguments.from_bundle_id or detect_source_bundle_id(PROFILES)
+        output_profiles = os.path.join(arguments.out, "profiles")
+        os.makedirs(output_profiles, exist_ok=True)
+        shutil.copytree(os.path.join(FAKE_DIR, "certs"), os.path.join(arguments.out, "certs"), dirs_exist_ok=True)
+        print("Retargeting profiles %s -> %s in %s" % (source_bundle_id, target_bundle_id, arguments.out))
+
     temporary = tempfile.mkdtemp()
     try:
         certificate_path, key_path = extract_certificate(temporary)
@@ -162,6 +216,8 @@ def main():
         for path in sorted(glob.glob(os.path.join(PROFILES, "*.mobileprovision"))):
             name = os.path.basename(path)
             payload = profile_payload(path)
+            if source_bundle_id is not None:
+                payload = retarget_bundle_id(payload, source_bundle_id, target_bundle_id)
             payload, before_after = bump_date(payload, arguments.year)
 
             payload_path = os.path.join(temporary, name + ".plist")
@@ -185,14 +241,14 @@ def main():
                 sys.stderr.write(error)
                 raise SystemExit("re-signed %s does not verify" % name)
 
-            shutil.copyfile(signed_path, path)
+            shutil.copyfile(signed_path, os.path.join(output_profiles, name))
             if before_after is None:
                 print("%-42s re-signed" % name)
             else:
                 print("%-42s %s -> %s" % (name, before_after[0], before_after[1]))
                 changed += 1
 
-        print("Re-signed %d profile(s), bumped %d date(s) in %s" % (len(glob.glob(os.path.join(PROFILES, "*.mobileprovision"))), changed, PROFILES))
+        print("Re-signed %d profile(s), bumped %d date(s) in %s" % (len(glob.glob(os.path.join(PROFILES, "*.mobileprovision"))), changed, output_profiles))
     finally:
         shutil.rmtree(temporary, ignore_errors=True)
 
