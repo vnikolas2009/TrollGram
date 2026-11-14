@@ -165,6 +165,46 @@ jobs:
           echo "XCODE_VERSION=$XCODE_VERSION" >> "$GITHUB_ENV"
           echo "CONFIGURATION=${{ github.event.inputs.configuration || 'release_arm64' }}" >> "$GITHUB_ENV"
 
+      # A login code is only delivered to the app the code belongs to. The
+      # bundled api_id is 8, Telegram's own iOS application: the servers treat
+      # that handshake as Telegram and push the code to the official App Store
+      # build, so a fork built with it receives nothing at all - no SMS, no
+      # in-app message. A fork must log in under its own application, which is
+      # registered at https://my.telegram.org/apps and put in these secrets.
+      # The identity is used only for this login handshake; sessions that are
+      # already authorised keep working.
+      - name: Log in under this fork's own api_id
+        id: api_credentials
+        timeout-minutes: 5
+        env:
+          OWN_API_ID: ${{ secrets.TG_API_ID }}
+          OWN_API_HASH: ${{ secrets.TG_API_HASH }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OWN_API_ID" ] || [ -z "$OWN_API_HASH" ]; then
+            echo "::warning::TG_API_ID / TG_API_HASH are not set, so this build keeps api_id 8 and will receive no login code. Register an application at https://my.telegram.org/apps (platform: other) and add its api_id and api_hash as the TG_API_ID / TG_API_HASH secrets."
+            exit 0
+          fi
+          python3 - "$OWN_API_ID" "$OWN_API_HASH" <<'PY'
+          import json, sys
+
+          api_id, api_hash = sys.argv[1].strip(), sys.argv[2].strip()
+          if not api_id.isdigit():
+              sys.exit("TG_API_ID must be the numeric api_id from my.telegram.org, got %r" % api_id)
+          if len(api_hash) != 32 or any(character not in "0123456789abcdef" for character in api_hash.lower()):
+              sys.exit("TG_API_HASH must be the 32-character api_hash from my.telegram.org")
+
+          path = "build-system/appstore-configuration.json"
+          with open(path, encoding="utf-8") as handle:
+              configuration = json.load(handle)
+          configuration["api_id"] = api_id
+          configuration["api_hash"] = api_hash
+          with open(path, "w", encoding="utf-8") as handle:
+              json.dump(configuration, handle, indent="\t")
+              handle.write("\n")
+          print("login api_id: %s (the fork's own application)" % api_id)
+          PY
+
       - name: Build app (unsigned)
         timeout-minutes: 300
         run: |
@@ -256,37 +296,50 @@ jobs:
           ls -lh TrollGram.ipa
 
       # Optional: sign the IPA with the certificate from the repository
-      # secrets. Failures do not fail the build - the unsigned IPA is still
-      # published (TrollStore installs it as is).
+      # secrets. The build itself stays green when signing cannot work - the
+      # unsigned IPA is still published, and TrollStore installs it as is. A
+      # failure still has to be visible, though: `continue-on-error` used to
+      # turn this step into a success, which is why a run could report
+      # "Success" while the app was never signed.
       - name: Sign IPA with personal certificate
         id: sign
         if: env.P12_BASE64 != '' && env.PROFILE_BASE64 != ''
-        continue-on-error: true
         timeout-minutes: 20
+        env:
+          # Through the environment, so no command line (or `set -x` trace)
+          # can print the password.
+          SIGN_P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
         run: |
           set -o pipefail
-          set -x
           printf '%s' "$P12_BASE64" | openssl base64 -d -A > "$RUNNER_TEMP/cert.p12"
           printf '%s' "$PROFILE_BASE64" | openssl base64 -d -A > "$RUNNER_TEMP/profile.mobileprovision"
-          python3 build-system/sign_ipa.py \
+          if python3 build-system/sign_ipa.py \
             --input "$RUNNER_TEMP/TrollGram.ipa" \
             --output "$RUNNER_TEMP/TrollGram-signed.ipa" \
             --p12 "$RUNNER_TEMP/cert.p12" \
-            --password "$P12_PASSWORD" \
+            --password "$SIGN_P12_PASSWORD" \
             --profile "$RUNNER_TEMP/profile.mobileprovision" \
-            2>&1 | tee "$RUNNER_TEMP/sign.log"
-          echo "signed=true" >> "$GITHUB_OUTPUT"
+            2>&1 | tee "$RUNNER_TEMP/sign.log"; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Signing failed; publishing the unsigned IPA only. The reason is in the annotations below."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Report signing failure
-        if: steps.sign.outcome == 'failure'
+        if: always() && steps.sign.outcome != 'success'
         timeout-minutes: 5
         run: |
+          if [ -z "$P12_BASE64" ] || [ -z "$PROFILE_BASE64" ]; then
+            echo "::warning::P12_BASE64 / MOBILEPROVISION_BASE64 are not set, so the IPA is published unsigned."
+            exit 0
+          fi
           if [ -f "$RUNNER_TEMP/sign.log" ]; then
             tail -n 40 "$RUNNER_TEMP/sign.log" | while IFS= read -r line; do
-              echo "::error::sign: $(printf '%s' "$line" | cut -c1-900)"
+              echo "::warning::sign: $(printf '%s' "$line" | cut -c1-900)"
             done
           else
-            echo "::error::sign: the signing step failed before producing a log"
+            echo "::warning::sign: the signing step failed before producing a log"
           fi
 
       - name: Upload artifact
