@@ -59,18 +59,89 @@ def read_profile(path):
     return plistlib.loads(result.stdout)
 
 
+def unwrap_base64_p12(p12_path):
+    """A secret that was base64-encoded twice decodes to base64 text; decode it once more.
+
+    Returns the path of the usable DER file (the input itself when nothing had to be done).
+    """
+    with open(p12_path, "rb") as handle:
+        data = handle.read()
+    log("p12 file: %d bytes, %s" % (len(data), "DER" if data[:1] == b"\x30" else "not DER (first byte 0x%02x)" % (data[:1] or b"\x00")[0]))
+    stripped = data.strip()
+    if stripped[:1] != b"\x30" and re.fullmatch(rb"[A-Za-z0-9+/=\r\n]+", stripped or b"-"):
+        import base64
+        try:
+            decoded = base64.b64decode(stripped, validate=False)
+        except ValueError:
+            return p12_path
+        if decoded[:1] == b"\x30":
+            log("the p12 secret was base64-encoded twice, decoded it once more")
+            fixed_path = p12_path + ".der"
+            with open(fixed_path, "wb") as handle:
+                handle.write(decoded)
+            return fixed_path
+    return p12_path
+
+
+def convert_p12_for_macos(p12_path, password, directory):
+    """Re-export a .p12 with the older algorithms that macOS `security import` understands.
+
+    OpenSSL 3 writes AES-256/PBKDF2/SHA-256 containers by default, which `security` can
+    reject with "Unable to decode the provided data". Returns the new path or None.
+    """
+    environment = dict(os.environ, SIGN_P12_PASSWORD=password)
+    pem_path = os.path.join(directory, "identity.pem")
+    converted_path = os.path.join(directory, "identity-compat.p12")
+    read = None
+    for extra in (["-legacy"], []):
+        read = subprocess.run(
+            ["openssl", "pkcs12", "-in", p12_path, "-nodes", "-passin", "env:SIGN_P12_PASSWORD", "-out", pem_path] + extra,
+            capture_output=True, text=True, env=environment,
+        )
+        if read.returncode == 0:
+            break
+    if read is None or read.returncode != 0:
+        log("openssl could not read the .p12 either (wrong password or not a PKCS#12 file)")
+        return None
+    export = subprocess.run(
+        [
+            "openssl", "pkcs12", "-export", "-in", pem_path, "-out", converted_path,
+            "-passout", "env:SIGN_P12_PASSWORD",
+            "-certpbe", "PBE-SHA1-3DES", "-keypbe", "PBE-SHA1-3DES", "-macalg", "sha1",
+        ],
+        capture_output=True, text=True, env=environment,
+    )
+    os.remove(pem_path)
+    if export.returncode != 0:
+        log("could not re-export the .p12 in a compatible format")
+        return None
+    return converted_path
+
+
 def import_certificate(p12_path, password, keychain):
     keychain_password = "trollgram-sign"
     try_run(["security", "delete-keychain", keychain])
     run(["security", "create-keychain", "-p", keychain_password, keychain])
     run(["security", "set-keychain-settings", "-lut", "21600", keychain])
     run(["security", "unlock-keychain", "-p", keychain_password, keychain])
-    run([
-        "security", "import", p12_path,
-        "-P", password,
-        "-A", "-t", "cert", "-f", "pkcs12",
-        "-k", keychain,
-    ])
+
+    def security_import(path):
+        return try_run([
+            "security", "import", path,
+            "-P", password,
+            "-A", "-t", "cert", "-f", "pkcs12",
+            "-k", keychain,
+        ])
+
+    p12_path = unwrap_base64_p12(p12_path)
+    if not security_import(p12_path):
+        log("`security import` rejected the .p12, retrying with a macOS-compatible re-export")
+        converted_path = convert_p12_for_macos(p12_path, password, os.path.dirname(keychain))
+        if converted_path is None or not security_import(converted_path):
+            raise SystemExit(
+                "the .p12 could not be imported. Check the P12_BASE64 secret (the base64 of the .p12 file, one "
+                "line) and P12_PASSWORD (the password used when exporting the certificate)."
+            )
     run([
         "security", "set-key-partition-list",
         "-S", "apple-tool:,apple:,codesign:",
