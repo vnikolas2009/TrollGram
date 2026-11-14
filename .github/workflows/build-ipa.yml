@@ -77,13 +77,51 @@ jobs:
         timeout-minutes: 10
         run: |
           set -x
-          XCODE_VERSION=$(python3 -c 'import json;print(json.load(open("versions.json"))["xcode"])')
-          if [ -d "/Applications/Xcode_${XCODE_VERSION}.app" ]; then
-            sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app/Contents/Developer"
-          else
-            echo "Xcode ${XCODE_VERSION} not available, using default: $(xcodebuild -version | head -1)"
-          fi
+          # actool (asset catalogs, also for device builds) needs an installed simulator runtime that fits
+          # the Xcode's iphonesimulator SDK, otherwise the build fails with "No simulator runtime version
+          # from [...] available to use with iphonesimulator SDK version ...". The runner image keeps many
+          # Xcodes but only the runtimes of some of them, so take the Xcode from versions.json if its SDK has
+          # a runtime, and otherwise the newest Xcode that does.
+          xcrun simctl list runtimes || true
+          python3 - <<'PY'
+          import glob, json, os, re, subprocess, sys
+
+          requested = json.load(open("versions.json"))["xcode"]
+          runtimes = subprocess.run(["xcrun", "simctl", "list", "runtimes"], capture_output=True, text=True).stdout
+
+          def version_key(path):
+              return tuple(int(part) for part in re.findall(r"\d+", os.path.basename(path)))
+
+          apps = sorted(
+              {path for path in glob.glob("/Applications/Xcode_*.app") if not re.search(r"beta|rc|candidate", path, re.I)},
+              key=version_key,
+              reverse=True,
+          )
+          first = "/Applications/Xcode_%s.app" % requested
+          order = ([first] if os.path.isdir(first) else []) + [path for path in apps if path != first]
+
+          chosen = None
+          for app in order:
+              developer_dir = os.path.join(app, "Contents/Developer")
+              result = subprocess.run(
+                  ["xcodebuild", "-version", "-sdk", "iphonesimulator", "ProductBuildVersion"],
+                  capture_output=True, text=True, env=dict(os.environ, DEVELOPER_DIR=developer_dir),
+              )
+              build = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
+              print("%s: iphonesimulator SDK build %s" % (app, build or "unknown"))
+              if build and build in runtimes:
+                  chosen = developer_dir
+                  break
+
+          if chosen is None:
+              print("No Xcode with a matching simulator runtime found, keeping the default")
+              sys.exit(0)
+          if not chosen.startswith(first + "/"):
+              print("Xcode %s has no matching simulator runtime, using %s instead" % (requested, chosen))
+          subprocess.run(["sudo", "xcode-select", "-s", chosen], check=True)
+          PY
           xcodebuild -version
+          xcodebuild -version -sdk iphonesimulator ProductBuildVersion
 
       - name: Fetch Python runtime
         timeout-minutes: 15
