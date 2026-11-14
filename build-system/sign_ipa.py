@@ -43,11 +43,16 @@ def run(arguments, **kwargs):
 
 
 def try_run(arguments):
-    try:
-        subprocess.run(arguments, check=True, capture_output=True, text=True)
-        return True
-    except subprocess.CalledProcessError:
-        return False
+    """Runs a command and returns its stderr (empty when it succeeded).
+
+    The output matters when the command fails: `security import` explains a
+    rejected .p12 in exactly one line of stderr, and without it "wrong
+    password" is the only thing left to say.
+    """
+    result = subprocess.run(arguments, capture_output=True, text=True)
+    if result.returncode == 0:
+        return ""
+    return (result.stderr or result.stdout or "exit status %d" % result.returncode).strip()
 
 
 def read_profile(path):
@@ -134,13 +139,19 @@ def import_certificate(p12_path, password, keychain):
         ])
 
     p12_path = unwrap_base64_p12(p12_path)
-    if not security_import(p12_path):
-        log("`security import` rejected the .p12, retrying with a macOS-compatible re-export")
+    error = security_import(p12_path)
+    if error:
+        log("`security import` rejected the .p12: %s" % error)
+        log("retrying with a macOS-compatible re-export")
         converted_path = convert_p12_for_macos(p12_path, password, os.path.dirname(keychain))
-        if converted_path is None or not security_import(converted_path):
+        error = None if converted_path is None else security_import(converted_path)
+        if converted_path is None or error:
+            if error:
+                log("the re-exported .p12 was rejected too: %s" % error)
             raise SystemExit(
-                "the .p12 could not be imported. Check the P12_BASE64 secret (the base64 of the .p12 file, one "
-                "line) and P12_PASSWORD (the password used when exporting the certificate)."
+                "the .p12 could not be imported: %s. Check the P12_BASE64 secret (the base64 of the .p12 file, one "
+                "line) and P12_PASSWORD (the password used when exporting the certificate; an empty secret counts "
+                "as an empty password)." % (error or "the file is not a PKCS#12 archive")
             )
     run([
         "security", "set-key-partition-list",
@@ -155,10 +166,16 @@ def import_certificate(p12_path, password, keychain):
     run(["security", "list-keychains", "-d", "user", "-s", keychain] + existing_keychains)
 
     listing = run(["security", "find-identity", "-v", "-p", "codesigning", keychain]).stdout
-    match = re.search(r'\)\s+"([^"]+)"', listing)
+    # Each line is `  1) <SHA-1 hash> "iPhone Distribution: Name (TEAMID)"`, so the
+    # hash sits between the index and the quoted name: matching `) "` alone never
+    # matches, which reported a perfectly imported identity as missing.
+    match = re.search(r'^\s*\d+\)\s+[0-9A-Fa-f]+\s+"([^"]+)"', listing, re.MULTILINE)
     if match is None:
         sys.stderr.write(listing)
-        raise SystemExit("no code signing identity found in the .p12 (wrong password?)")
+        raise SystemExit(
+            "no code signing identity found in the .p12 (wrong password?). "
+            "`security find-identity` printed:\n%s" % (listing.strip() or "<nothing>")
+        )
     return match.group(1)
 
 
@@ -240,7 +257,7 @@ def main():
     team_id = entitlements.get("com.apple.developer.team-identifier") or profile_app_id.split(".", 1)[0]
 
     expiration = profile.get("ExpirationDate")
-    if expiration is not None and expiration < datetime.datetime.utcnow():
+    if expiration is not None and expiration < datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None):
         raise SystemExit("the provisioning profile expired on %s" % expiration)
 
     devices = profile.get("ProvisionedDevices")

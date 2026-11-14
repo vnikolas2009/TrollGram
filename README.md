@@ -130,6 +130,18 @@ GitHub Actions secrets:
 - `P12_PASSWORD`
 - `MOBILEPROVISION_BASE64`
 
+Logging in to the built app requires the fork's own Telegram application,
+because a login code is only delivered to the app it was issued for:
+
+- `TG_API_ID`
+- `TG_API_HASH`
+
+Register an application at <https://my.telegram.org/apps> (platform
+"other"), then add its `api_id` and `api_hash` as the two secrets. Without
+them the build keeps the bundled `api_id` 8 -- Telegram's own App Store
+application -- and no login code is delivered to this build at all, neither
+by SMS nor as an in-app message.
+
 Do not publish certificates, provisioning profiles or passwords
 in the repository.
 
