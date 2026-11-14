@@ -205,6 +205,17 @@ def main():
             log("profile bundle id %r != app %r, renaming the app" % (bundle_id, original_bundle_id))
             set_bundle_identifier(app_path, bundle_id)
 
+        # The app derives its App Group from the bundle id ("group.<bundle id>"). A profile without that
+        # group leaves the shared container unreachable at launch, so say it here instead of in the app.
+        expected_group = "group.%s" % bundle_id
+        profile_groups = entitlements.get("com.apple.security.application-groups") or []
+        if expected_group not in profile_groups:
+            log(
+                "warning: the profile does not contain the app group %r (it has %r); the app will fall back "
+                "to its own sandbox for data. Add the group to the App ID and regenerate the profile for "
+                "a shared container." % (expected_group, profile_groups)
+            )
+
         # watchOS code needs watchOS provisioning profiles - never available here.
         watch_path = os.path.join(app_path, "Watch")
         if os.path.isdir(watch_path):
