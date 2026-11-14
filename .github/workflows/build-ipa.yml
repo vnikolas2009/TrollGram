@@ -23,10 +23,6 @@ on:
   push:
     tags:
       - "v*"
-  # One-off off-peak run: Sat 2026-11-14 03:17 UTC (06:17 MSK, US night, weekend). Fires once per year on
-  # Nov 14; inputs fall back to release_arm64 / keep_going=false / create_release=true. Remove after use.
-  schedule:
-    - cron: "17 3 14 11 *"
 
 permissions:
   contents: write
@@ -93,9 +89,7 @@ jobs:
         timeout-minutes: 15
         run: |
           set -x
-          --configuration="$CONFIGURATION" \
-          --disableProvisioningProfiles \
-          --buildNumber="$BUILD_NUMBER" \
+          python3 build-system/setup_python.py
           du -sh third-party/python/Python.xcframework third-party/python/resources
 
       - name: Prepare build log
@@ -134,9 +128,26 @@ jobs:
           echo "CONFIGURATION=${{ github.event.inputs.configuration || 'release_arm64' }}" >> "$GITHUB_ENV"
 
       - name: Build app (unsigned)
-        shell: bash
+        timeout-minutes: 300
         run: |
-          set -euo pipefail
+          set -o pipefail
+          set -x
+          cd "$SOURCE_DIR"
+          mkdir -p "$BUILD_CACHE_DIR"
+          python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+
+          # --disableProvisioningProfiles: the fake profiles in build-system/fake-codesigning belong to the
+          # old bundle id, so with bundle_id = com.TrollCerts.Gram none of them would match. The IPA is
+          # signed afterwards with the real profile (sign_ipa.py), so no profile is needed here.
+          EXTRA_ARGS=(
+            --disableProvisioningProfiles
+            --skipDsym
+            --enableParallelSwiftmoduleGeneration
+            --bazelProfile="$RUNNER_TEMP/bazel-profile.json"
+          )
+          if [ "${{ github.event.inputs.keep_going }}" = "true" ]; then
+            EXTRA_ARGS+=(--continueOnError)
+          fi
 
           python3 -u build-system/Make/Make.py \
             --cacheDir="$BUILD_CACHE_DIR" \
@@ -146,10 +157,10 @@ jobs:
             --configurationPath="build-system/appstore-configuration.json" \
             --codesigningInformationPath=build-system/fake-codesigning \
             --configuration="$CONFIGURATION" \
-            --disableProvisioningProfiles \
             --buildNumber="$BUILD_NUMBER" \
+            "${EXTRA_ARGS[@]}" \
             2>&1 | tee -a "$BUILD_LOG"
-      
+
       - name: Package unsigned IPA
         timeout-minutes: 20
         run: |
